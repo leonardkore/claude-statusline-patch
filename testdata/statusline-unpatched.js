@@ -1,0 +1,1 @@
+,G=dY.useCallback(()=>{if(j.current!==void 0)clearTimeout(j.current);j.current=setTimeout((k,N)=>{k.current=void 0,N()},300,j,J)},[J]);dY.useEffect(()=>{if($!==Y.current.messageId||D!==Y.current.permissionMode||A!==Y.current.vimMode)Y.current.permissionMode=D,Y.current.vimMode=A,G()},[$,D,A,G]);
