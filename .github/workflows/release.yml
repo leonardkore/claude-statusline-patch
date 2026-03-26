@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build archive
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ARCHIVE: ${{ matrix.archive }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          suffix=""
+          bin_name="claude-statusline-patch"
+          if [[ "$GOOS" == "windows" ]]; then
+            suffix=".exe"
+          fi
+          out_dir="dist/claude-statusline-patch_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "$out_dir"
+          go build -ldflags="-X github.com/leonardkore/claude-statusline-patch/internal/version.Version=${VERSION}" -o "${out_dir}/${bin_name}${suffix}" ./cmd/claude-statusline-patch
+          if [[ "$ARCHIVE" == "tar.gz" ]]; then
+            tar -C dist -czf "${out_dir}.tar.gz" "$(basename "$out_dir")"
+          else
+            (cd dist && zip -rq "$(basename "$out_dir").zip" "$(basename "$out_dir")")
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+      - name: publish github release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          body: |
+            Supported Claude versions verified: 2.1.84
+            Supported OS live-verified: Linux
+            Warning: only Linux + Claude 2.1.84 is live-verified unless more testing was actually done.
