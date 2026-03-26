@@ -36,7 +36,7 @@ type Inspection struct {
 func Inspect(payload []byte) Inspection {
 	version := DetectVersion(payload)
 	unpatchedMatches := bytes.Count(payload, unpatchedBytes)
-	patchedIntervals := findPatchedIntervals(payload)
+	patchedIntervals, malformedPatchedMatch := findPatchedIntervals(payload)
 
 	inspection := Inspection{
 		Version:          version,
@@ -44,7 +44,7 @@ func Inspect(payload []byte) Inspection {
 		PatchedMatches:   len(patchedIntervals),
 	}
 
-	if unpatchedMatches > 1 || len(patchedIntervals) > 1 || (unpatchedMatches == 1 && len(patchedIntervals) == 1) {
+	if malformedPatchedMatch || unpatchedMatches > 1 || len(patchedIntervals) > 1 || (unpatchedMatches == 1 && len(patchedIntervals) == 1) {
 		inspection.State = StateAmbiguous
 		return inspection
 	}
@@ -64,7 +64,7 @@ func Inspect(payload []byte) Inspection {
 		inspection.State = StatePatched
 		inspection.IntervalMS = patchedIntervals[0]
 	default:
-		inspection.State = StateUnsupported
+		inspection.State = StateAmbiguous
 	}
 
 	return inspection
@@ -82,12 +82,18 @@ func Apply(payload []byte, intervalMS int) ([]byte, error) {
 	inspection := Inspect(payload)
 	switch inspection.State {
 	case StateUnpatched:
-		// continue
+		return ApplyKnownUnpatched(payload, intervalMS)
 	case StatePatched:
 		return nil, fmt.Errorf("payload already patched at %dms", inspection.IntervalMS)
 	case StateAmbiguous:
 		return nil, fmt.Errorf("patch match is ambiguous")
 	default:
+		return nil, fmt.Errorf("payload is unsupported for patching")
+	}
+}
+
+func ApplyKnownUnpatched(payload []byte, intervalMS int) ([]byte, error) {
+	if DetectVersion(payload) != SupportedVersion {
 		return nil, fmt.Errorf("payload is unsupported for patching")
 	}
 
@@ -96,12 +102,14 @@ func Apply(payload []byte, intervalMS int) ([]byte, error) {
 		return nil, err
 	}
 
-	out := append([]byte(nil), payload...)
-	index := bytes.Index(out, unpatchedBytes)
+	index := bytes.Index(payload, unpatchedBytes)
 	if index < 0 {
 		return nil, fmt.Errorf("unpatched signature not found")
 	}
-	out = append(out[:index], append(replacement, out[index+len(unpatchedBytes):]...)...)
+	out := make([]byte, len(payload)+len(replacement)-len(unpatchedBytes))
+	copy(out, payload[:index])
+	copy(out[index:], replacement)
+	copy(out[index+len(replacement):], payload[index+len(unpatchedBytes):])
 
 	post := Inspect(out)
 	if post.State != StatePatched || post.IntervalMS != intervalMS {
@@ -121,13 +129,14 @@ func buildPatchedBytes(intervalMS int) ([]byte, error) {
 	return base, nil
 }
 
-func findPatchedIntervals(payload []byte) []int {
+func findPatchedIntervals(payload []byte) ([]int, bool) {
 	var intervals []int
 	searchStart := 0
+	maxInt := int(^uint(0) >> 1)
 	for {
 		offset := bytes.Index(payload[searchStart:], patchedPrefix)
 		if offset < 0 {
-			return intervals
+			return intervals, false
 		}
 		offset += searchStart
 
@@ -144,10 +153,17 @@ func findPatchedIntervals(payload []byte) []int {
 			searchStart = offset + 1
 			continue
 		}
-		interval, err := strconv.Atoi(string(payload[numberStart:numberEnd]))
-		if err == nil {
-			intervals = append(intervals, interval)
+		interval := 0
+		for _, digit := range payload[numberStart:numberEnd] {
+			if interval > (maxInt-int(digit-'0'))/10 {
+				return intervals, true
+			}
+			interval = interval*10 + int(digit-'0')
+			if interval <= 0 {
+				return intervals, true
+			}
 		}
+		intervals = append(intervals, interval)
 		searchStart = numberEnd + len(patchedSuffix)
 	}
 }

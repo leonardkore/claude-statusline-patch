@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,13 @@ import (
 )
 
 const appDirName = "claude-statusline-patch"
+
+const (
+	stateDirMode   = 0o700
+	metadataMode   = 0o600
+	backupFileMode = 0o400
+	schemaVersion  = 1
+)
 
 type Metadata struct {
 	SchemaVersion   int    `json:"schema_version"`
@@ -30,6 +38,20 @@ type Metadata struct {
 
 func StateRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); root != "" {
+		if !filepath.IsAbs(root) {
+			return "", fmt.Errorf("XDG_STATE_HOME must be an absolute path: %s", root)
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		rel, err := filepath.Rel(home, root)
+		if err != nil {
+			return "", fmt.Errorf("resolve XDG_STATE_HOME relative to home dir: %w", err)
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("XDG_STATE_HOME must stay within %s: %s", home, root)
+		}
 		return filepath.Join(root, appDirName), nil
 	}
 	home, err := os.UserHomeDir()
@@ -58,35 +80,61 @@ func SHA256Bytes(data []byte) string {
 }
 
 func SHA256File(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	return SHA256Bytes(data), nil
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func EnsureBackup(canonicalPath, originalHash string, data []byte, mode os.FileMode) (string, error) {
+func ExpectedBackupPath(canonicalPath, originalHash string) (string, error) {
 	targetDir, err := TargetDir(canonicalPath)
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+	return filepath.Join(targetDir, fmt.Sprintf("backup-%s.bin", originalHash)), nil
+}
+
+func MetadataPath(canonicalPath, originalHash string) (string, error) {
+	targetDir, err := TargetDir(canonicalPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(targetDir, fmt.Sprintf("metadata-%s.json", originalHash)), nil
+}
+
+func EnsureBackup(canonicalPath, originalHash string, data []byte) (string, error) {
+	targetDir, err := TargetDir(canonicalPath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(targetDir, stateDirMode); err != nil {
 		return "", fmt.Errorf("create target state dir: %w", err)
 	}
 
-	backupPath := filepath.Join(targetDir, fmt.Sprintf("backup-%s.bin", originalHash))
-	if _, err := os.Stat(backupPath); err == nil {
-		hash, hashErr := SHA256File(backupPath)
-		if hashErr != nil {
-			return "", fmt.Errorf("hash existing backup: %w", hashErr)
+	backupPath, err := ExpectedBackupPath(canonicalPath, originalHash)
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(backupPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("existing backup is not a regular file: %s", backupPath)
 		}
-		if hash != originalHash {
-			return "", fmt.Errorf("existing backup hash mismatch for %s", backupPath)
+		if info.Size() != int64(len(data)) {
+			return "", fmt.Errorf("existing backup size mismatch for %s: expected %d, found %d", backupPath, len(data), info.Size())
 		}
 		return backupPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat existing backup: %w", err)
 	}
 
-	if err := writeAtomic(backupPath, data, mode); err != nil {
+	if err := writeAtomic(backupPath, data, backupFileMode); err != nil {
 		return "", err
 	}
 	return backupPath, nil
@@ -97,21 +145,44 @@ func SaveMetadata(meta Metadata) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+	if err := os.MkdirAll(targetDir, stateDirMode); err != nil {
 		return fmt.Errorf("create target state dir: %w", err)
 	}
 
-	meta.SchemaVersion = 1
+	backupPath, err := ExpectedBackupPath(meta.CanonicalPath, meta.OriginalSHA256)
+	if err != nil {
+		return err
+	}
+
+	meta.SchemaVersion = schemaVersion
 	meta.PathKey = PathKey(meta.CanonicalPath)
+	meta.BackupPath = backupPath
 	meta.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-	path := filepath.Join(targetDir, fmt.Sprintf("metadata-%s.json", meta.OriginalSHA256))
+	path, err := MetadataPath(meta.CanonicalPath, meta.OriginalSHA256)
+	if err != nil {
+		return err
+	}
 	payload, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
 	payload = append(payload, '\n')
-	return writeAtomic(path, payload, 0o644)
+	return writeAtomic(path, payload, metadataMode)
+}
+
+func DeleteMetadata(canonicalPath, originalHash string) error {
+	path, err := MetadataPath(canonicalPath, originalHash)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove metadata %s: %w", path, err)
+	}
+	return syncDir(filepath.Dir(path))
 }
 
 func LoadMatchingRecord(canonicalPath, currentHash string) (*Metadata, error) {
@@ -131,10 +202,7 @@ func LoadMatchingRecord(canonicalPath, currentHash string) (*Metadata, error) {
 	if len(matches) == 0 {
 		return nil, nil
 	}
-	if len(matches) > 1 {
-		return nil, fmt.Errorf("multiple managed records match %s", canonicalPath)
-	}
-	return matches[0], nil
+	return matches[len(matches)-1], nil
 }
 
 func loadRecords(canonicalPath string) ([]Metadata, error) {
@@ -157,11 +225,14 @@ func loadRecords(canonicalPath string) ([]Metadata, error) {
 		}
 		payload, readErr := os.ReadFile(filepath.Join(targetDir, entry.Name()))
 		if readErr != nil {
-			return nil, fmt.Errorf("read metadata %s: %w", entry.Name(), readErr)
+			continue
 		}
 		var meta Metadata
 		if err := json.Unmarshal(payload, &meta); err != nil {
-			return nil, fmt.Errorf("decode metadata %s: %w", entry.Name(), err)
+			continue
+		}
+		if err := validateMetadata(meta, canonicalPath); err != nil {
+			continue
 		}
 		records = append(records, meta)
 	}
@@ -173,7 +244,7 @@ func loadRecords(canonicalPath string) ([]Metadata, error) {
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, stateDirMode); err != nil {
 		return fmt.Errorf("create parent dir: %w", err)
 	}
 
@@ -182,7 +253,12 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("create temp file for %s: %w", path, err)
 	}
 	tempName := temp.Name()
-	defer os.Remove(tempName)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempName)
+		}
+	}()
 
 	if _, err := temp.Write(data); err != nil {
 		temp.Close()
@@ -199,8 +275,48 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close temp file for %s: %w", path, err)
 	}
+	if err := syncDir(dir); err != nil {
+		return err
+	}
 	if err := os.Rename(tempName, path); err != nil {
 		return fmt.Errorf("rename temp file for %s: %w", path, err)
+	}
+	committed = true
+	if err := syncDir(dir); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateMetadata(meta Metadata, canonicalPath string) error {
+	if meta.SchemaVersion != 0 && meta.SchemaVersion != schemaVersion {
+		return fmt.Errorf("unsupported schema version %d", meta.SchemaVersion)
+	}
+	if meta.CanonicalPath != canonicalPath {
+		return fmt.Errorf("metadata canonical path mismatch: %s", meta.CanonicalPath)
+	}
+	expectedPathKey := PathKey(canonicalPath)
+	if meta.PathKey != "" && meta.PathKey != expectedPathKey {
+		return fmt.Errorf("metadata path key mismatch: %s", meta.PathKey)
+	}
+	expectedBackupPath, err := ExpectedBackupPath(canonicalPath, meta.OriginalSHA256)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(meta.BackupPath) != filepath.Clean(expectedBackupPath) {
+		return fmt.Errorf("metadata backup path mismatch: %s", meta.BackupPath)
+	}
+	return nil
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open directory for sync: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync directory: %w", err)
 	}
 	return nil
 }

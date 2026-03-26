@@ -1,15 +1,11 @@
 package claude
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
 const defaultBinaryPath = "~/.local/bin/claude"
@@ -22,6 +18,7 @@ type ResolvedBinary struct {
 	CanonicalPath string
 	Version       string
 	Mode          os.FileMode
+	Size          int64
 }
 
 func Resolve(binaryPath string) (*ResolvedBinary, error) {
@@ -42,13 +39,17 @@ func Resolve(binaryPath string) (*ResolvedBinary, error) {
 	if info.IsDir() {
 		return nil, fmt.Errorf("target is a directory: %s", canonicalPath)
 	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("target is not a regular file: %s", canonicalPath)
+	}
 
 	return &ResolvedBinary{
 		InputPath:     binaryPath,
 		DisplayPath:   displayPath,
 		CanonicalPath: canonicalPath,
-		Version:       detectVersion(canonicalPath),
+		Version:       detectVersionFromPath(canonicalPath),
 		Mode:          info.Mode(),
+		Size:          info.Size(),
 	}, nil
 }
 
@@ -77,14 +78,6 @@ func expandPath(binaryPath string) (string, error) {
 	return filepath.Abs(path)
 }
 
-func detectVersion(canonicalPath string) string {
-	if version := detectVersionFromPath(canonicalPath); version != "" {
-		return version
-	}
-	version, _ := detectVersionFromBinary(canonicalPath)
-	return version
-}
-
 func detectVersionFromPath(canonicalPath string) string {
 	parts := strings.Split(filepath.Clean(canonicalPath), string(filepath.Separator))
 	for i := 0; i < len(parts)-1; i++ {
@@ -93,24 +86,4 @@ func detectVersionFromPath(canonicalPath string) string {
 		}
 	}
 	return ""
-}
-
-func detectVersionFromBinary(canonicalPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, canonicalPath, "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("timed out running %s --version", canonicalPath)
-		}
-		return "", err
-	}
-
-	match := versionPattern.FindSubmatch(output)
-	if len(match) != 2 {
-		return "", fmt.Errorf("could not parse version from %s --version output", canonicalPath)
-	}
-	return string(match[1]), nil
 }

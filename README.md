@@ -35,6 +35,14 @@ Check the current binary state:
 claude-statusline-patch check
 ```
 
+`check` exit codes:
+
+- `0` patched
+- `1` unpatched
+- `2` unsupported Claude version
+- `3` operational error
+- `4` ambiguous or structurally inconsistent patch state
+
 Apply the fixed interval patch:
 
 ```bash
@@ -68,6 +76,8 @@ This tool stores its own persistent backup state under:
 ```bash
 $XDG_STATE_HOME/claude-statusline-patch
 ```
+
+When `XDG_STATE_HOME` is set, this tool requires it to be an absolute path inside the current user's home directory.
 
 If `XDG_STATE_HOME` is unset, the default is:
 

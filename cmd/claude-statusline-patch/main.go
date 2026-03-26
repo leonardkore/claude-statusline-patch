@@ -15,6 +15,8 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/version"
 )
 
+const maxBinarySizeBytes int64 = 1 << 30
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -60,9 +62,9 @@ func runApply(args []string) int {
 		return fail(err)
 	}
 
-	originalBytes, err := os.ReadFile(resolved.CanonicalPath)
+	originalBytes, err := readBoundedFile(resolved.CanonicalPath, maxBinarySizeBytes)
 	if err != nil {
-		return fail(fmt.Errorf("read target binary: %w", err))
+		return fail(err)
 	}
 	originalHash := backup.SHA256Bytes(originalBytes)
 
@@ -99,7 +101,7 @@ func runApply(args []string) int {
 		return fail(fmt.Errorf("refusing to patch Claude version %q; only %s is supported", inspection.Version, patch.SupportedVersion))
 	}
 
-	backupPath, err := backup.EnsureBackup(resolved.CanonicalPath, originalHash, originalBytes, resolved.Mode)
+	backupPath, err := backup.EnsureBackup(resolved.CanonicalPath, originalHash, originalBytes)
 	if err != nil {
 		return fail(err)
 	}
@@ -112,7 +114,7 @@ func runApply(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	patchedContents, err := patch.Apply(entryContents, *intervalMS)
+	patchedContents, err := patch.ApplyKnownUnpatched(entryContents, *intervalMS)
 	if err != nil {
 		return fail(err)
 	}
@@ -132,6 +134,10 @@ func runApply(args []string) int {
 		return fail(fmt.Errorf("re-validate rebuilt binary: expected patched %dms, got %s %dms", *intervalMS, postInspection.State, postInspection.IntervalMS))
 	}
 
+	if err := repack.WriteAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
+		return fail(err)
+	}
+
 	if err := backup.SaveMetadata(backup.Metadata{
 		CanonicalPath:   resolved.CanonicalPath,
 		DisplayPath:     resolved.DisplayPath,
@@ -142,11 +148,11 @@ func runApply(args []string) int {
 		BackupPath:      backupPath,
 		FileMode:        uint32(resolved.Mode.Perm()),
 	}); err != nil {
-		return fail(err)
-	}
-
-	if err := repack.WriteAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
-		return fail(err)
+		rollbackErr := repack.WriteAtomically(resolved.CanonicalPath, patchedHash, originalBytes, resolved.Mode)
+		if rollbackErr != nil {
+			return fail(fmt.Errorf("save metadata: %v; rollback failed: %w", err, rollbackErr))
+		}
+		return fail(fmt.Errorf("save metadata: %w", err))
 	}
 
 	fmt.Printf("patched: %s version=%s interval=%dms backup=%s\n", resolved.CanonicalPath, inspection.Version, *intervalMS, backupPath)
@@ -163,21 +169,21 @@ func runCheck(args []string) int {
 
 	resolved, err := claude.Resolve(*binaryPath)
 	if err != nil {
-		return fail(err)
+		return failCheck(err)
 	}
-	data, err := os.ReadFile(resolved.CanonicalPath)
+	data, err := readBoundedFile(resolved.CanonicalPath, maxBinarySizeBytes)
 	if err != nil {
-		return fail(fmt.Errorf("read target binary: %w", err))
+		return failCheck(err)
 	}
 	currentHash := backup.SHA256Bytes(data)
 
 	_, _, inspection, err := inspectBinary(data)
 	if err != nil {
-		return fail(err)
+		return failCheck(err)
 	}
 	managed, err := backup.LoadMatchingRecord(resolved.CanonicalPath, currentHash)
 	if err != nil {
-		return fail(err)
+		return failCheck(err)
 	}
 
 	fmt.Printf("binary: %s\n", resolved.CanonicalPath)
@@ -193,8 +199,10 @@ func runCheck(args []string) int {
 		return 0
 	case patch.StateUnpatched:
 		return 1
-	case patch.StateUnsupported, patch.StateAmbiguous:
+	case patch.StateUnsupported:
 		return 2
+	case patch.StateAmbiguous:
+		return 4
 	default:
 		return 3
 	}
@@ -212,9 +220,9 @@ func runRestore(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	currentBytes, err := os.ReadFile(resolved.CanonicalPath)
+	currentBytes, err := readBoundedFile(resolved.CanonicalPath, maxBinarySizeBytes)
 	if err != nil {
-		return fail(fmt.Errorf("read target binary: %w", err))
+		return fail(err)
 	}
 	currentHash := backup.SHA256Bytes(currentBytes)
 
@@ -237,9 +245,13 @@ func runRestore(args []string) int {
 		return fail(errors.New("binary no longer matches the managed patched hash; refusing restore"))
 	}
 
-	backupBytes, err := os.ReadFile(managed.BackupPath)
+	backupPath, err := backup.ExpectedBackupPath(managed.CanonicalPath, managed.OriginalSHA256)
 	if err != nil {
-		return fail(fmt.Errorf("read managed backup: %w", err))
+		return fail(err)
+	}
+	backupBytes, err := readBoundedFile(backupPath, maxBinarySizeBytes)
+	if err != nil {
+		return fail(err)
 	}
 	backupHash := backup.SHA256Bytes(backupBytes)
 	if backupHash != managed.OriginalSHA256 {
@@ -254,8 +266,11 @@ func runRestore(args []string) int {
 	if err := repack.WriteAtomically(resolved.CanonicalPath, currentHash, backupBytes, mode); err != nil {
 		return fail(err)
 	}
+	if err := backup.DeleteMetadata(resolved.CanonicalPath, managed.OriginalSHA256); err != nil {
+		return fail(err)
+	}
 
-	fmt.Printf("restored: %s from %s\n", resolved.CanonicalPath, managed.BackupPath)
+	fmt.Printf("restored: %s from %s\n", resolved.CanonicalPath, backupPath)
 	return 0
 }
 
@@ -268,12 +283,9 @@ func inspectBinary(data []byte) (*bun.Bundle, *bun.ModuleGraph, patch.Inspection
 	if err != nil {
 		return nil, nil, patch.Inspection{}, fmt.Errorf("parse embedded Bun module graph: %w", err)
 	}
-	entryIndex, entryModule, err := graph.EntryPointModule()
+	_, entryModule, err := graph.EntryPointModule()
 	if err != nil {
 		return nil, nil, patch.Inspection{}, err
-	}
-	if entryIndex < 0 {
-		return nil, nil, patch.Inspection{}, errors.New("missing entry point module")
 	}
 	entryContents, err := graph.Slice(entryModule.Contents)
 	if err != nil {
@@ -285,6 +297,29 @@ func inspectBinary(data []byte) (*bun.Bundle, *bun.ModuleGraph, patch.Inspection
 func fail(err error) int {
 	fmt.Fprintln(os.Stderr, err)
 	return 1
+}
+
+func failCheck(err error) int {
+	fmt.Fprintln(os.Stderr, err)
+	return 3
+}
+
+func readBoundedFile(path string, maxSize int64) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("target is not a regular file: %s", path)
+	}
+	if info.Size() < 0 || info.Size() > maxSize {
+		return nil, fmt.Errorf("refusing to read %s: size %d exceeds limit %d", path, info.Size(), maxSize)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read target binary: %w", err)
+	}
+	return data, nil
 }
 
 func printUsage(w *os.File) {

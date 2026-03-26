@@ -41,8 +41,8 @@ func TestInspectFailsCleanlyOnUnknownShape(t *testing.T) {
 	payload := append(versionBytes(SupportedVersion), []byte("console.log('unknown shape');")...)
 
 	inspection := Inspect(payload)
-	if inspection.State != StateUnsupported {
-		t.Fatalf("expected unsupported, got %s", inspection.State)
+	if inspection.State != StateAmbiguous {
+		t.Fatalf("expected ambiguous, got %s", inspection.State)
 	}
 }
 
@@ -71,6 +71,24 @@ func TestApplyProducesExpectedPatchedFixture(t *testing.T) {
 	}
 	if !bytes.Equal(patched, expected) {
 		t.Fatalf("patched payload does not match expected fixture")
+	}
+}
+
+func TestInspectMalformedPatchedIntervalIsAmbiguous(t *testing.T) {
+	payload := append(versionBytes(SupportedVersion), append(append([]byte(nil), patchedPrefix...), append(bytes.Repeat([]byte("9"), 32), patchedSuffix...)...)...)
+
+	inspection := Inspect(payload)
+	if inspection.State != StateAmbiguous {
+		t.Fatalf("expected ambiguous, got %s", inspection.State)
+	}
+}
+
+func TestInspectDuplicateMatchesAreAmbiguous(t *testing.T) {
+	payload := append(versionBytes(SupportedVersion), append(loadFixture(t, "statusline-unpatched.js"), loadFixture(t, "statusline-unpatched.js")...)...)
+
+	inspection := Inspect(payload)
+	if inspection.State != StateAmbiguous {
+		t.Fatalf("expected ambiguous, got %s", inspection.State)
 	}
 }
 

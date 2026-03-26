@@ -60,6 +60,44 @@ func TestReplacePayloadSection(t *testing.T) {
 	}
 }
 
+func TestReplacePayloadOverlayRoundTrip(t *testing.T) {
+	originalPayload := buildOverlayGraphPayload([]byte(`VERSION:"2.1.84";console.log("overlay");`))
+	image := buildOverlayFixture(originalPayload)
+
+	meta, err := ParseOverlayMetadata(image)
+	if err != nil {
+		t.Fatalf("ParseOverlayMetadata failed: %v", err)
+	}
+
+	replacementPayload := buildOverlayGraphPayload([]byte(`VERSION:"2.1.84";console.log("overlay replacement with longer contents");`))
+	replaced, err := ReplacePayload(image, meta, replacementPayload)
+	if err != nil {
+		t.Fatalf("ReplacePayload failed: %v", err)
+	}
+	extracted, err := Extract(replaced)
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	if !bytes.Equal(extracted.Payload, replacementPayload) {
+		t.Fatalf("unexpected overlay payload after replace")
+	}
+	graph, err := ParseModuleGraph(FormatOverlay, extracted.Payload)
+	if err != nil {
+		t.Fatalf("ParseModuleGraph after overlay replace failed: %v", err)
+	}
+	_, entry, err := graph.EntryPointModule()
+	if err != nil {
+		t.Fatalf("EntryPointModule after overlay replace failed: %v", err)
+	}
+	contents, err := graph.Slice(entry.Contents)
+	if err != nil {
+		t.Fatalf("Slice after overlay replace failed: %v", err)
+	}
+	if !bytes.Contains(contents, []byte("replacement")) {
+		t.Fatalf("expected replacement contents in overlay graph")
+	}
+}
+
 func TestParseModuleGraphAndReplaceContents(t *testing.T) {
 	unpatched := []byte(`VERSION:"2.1.84";` + `,G=dY.useCallback(()=>{if(j.current!==void 0)clearTimeout(j.current);j.current=setTimeout((k,N)=>{k.current=void 0,N()},300,j,J)},[J]);dY.useEffect(()=>{if($!==Y.current.messageId||D!==Y.current.permissionMode||A!==Y.current.vimMode)Y.current.permissionMode=D,Y.current.vimMode=A,G()},[$,D,A,G]);`)
 	payload := buildSectionGraphPayload(unpatched)
@@ -98,6 +136,22 @@ func TestParseModuleGraphAndReplaceContents(t *testing.T) {
 	}
 	if !bytes.Contains(replacedContents, []byte("1000")) {
 		t.Fatalf("expected replaced contents to contain updated interval")
+	}
+}
+
+func TestShiftPointerAtExactOffset(t *testing.T) {
+	shifted, err := shiftPointer(StringPointer{Offset: 32, Length: 4}, 32, 7)
+	if err != nil {
+		t.Fatalf("shiftPointer failed: %v", err)
+	}
+	if shifted.Offset != 39 {
+		t.Fatalf("expected offset 39, got %d", shifted.Offset)
+	}
+}
+
+func TestShiftPointerRejectsNegativeOffset(t *testing.T) {
+	if _, err := shiftPointer(StringPointer{Offset: 5, Length: 4}, 0, -8); err == nil {
+		t.Fatalf("expected underflow error")
 	}
 }
 
@@ -147,6 +201,22 @@ func buildSectionGraphPayload(contents []byte) []byte {
 	out.Write(graph)
 	out.Write(offsetBytes)
 	out.WriteString(overlayTrailer)
+	return out.Bytes()
+}
+
+func buildOverlayGraphPayload(contents []byte) []byte {
+	sectionPayload := buildSectionGraphPayload(contents)
+	offsetsOffset := len(sectionPayload) - len(overlayTrailer) - overlayOffsets
+	graphBytes := sectionPayload[:offsetsOffset]
+	offsetBytes := sectionPayload[offsetsOffset : offsetsOffset+overlayOffsets]
+
+	var out bytes.Buffer
+	out.Write(graphBytes)
+	out.Write(offsetBytes)
+	out.WriteString(overlayTrailer)
+	var totalCount [8]byte
+	binary.LittleEndian.PutUint64(totalCount[:], uint64(len(graphBytes)))
+	out.Write(totalCount[:])
 	return out.Bytes()
 }
 

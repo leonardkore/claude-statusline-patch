@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -28,8 +30,8 @@ jobs:
             goarch: amd64
             archive: zip
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
       - name: build archive
@@ -41,6 +43,10 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "unsupported release tag: $VERSION" >&2
+            exit 1
+          fi
           mkdir -p dist
           suffix=""
           bin_name="claude-statusline-patch"
@@ -49,13 +55,14 @@ jobs:
           fi
           out_dir="dist/claude-statusline-patch_${VERSION}_${GOOS}_${GOARCH}"
           mkdir -p "$out_dir"
-          go build -ldflags="-X github.com/leonardkore/claude-statusline-patch/internal/version.Version=${VERSION}" -o "${out_dir}/${bin_name}${suffix}" ./cmd/claude-statusline-patch
+          ldflags="-X github.com/leonardkore/claude-statusline-patch/internal/version.Version=${VERSION}"
+          go build -ldflags="$ldflags" -o "${out_dir}/${bin_name}${suffix}" ./cmd/claude-statusline-patch
           if [[ "$ARCHIVE" == "tar.gz" ]]; then
             tar -C dist -czf "${out_dir}.tar.gz" "$(basename "$out_dir")"
           else
             (cd dist && zip -rq "$(basename "$out_dir").zip" "$(basename "$out_dir")")
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -68,7 +75,22 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: verify tag is on main
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "unsupported release tag: $VERSION" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: dist
           merge-multiple: true
@@ -76,15 +98,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd dist
-          sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+          mapfile -t archives < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "no release archives found" >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > dist/SHA256SUMS.txt
+      - name: collect release files
+        id: release_files
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'files<<EOF'
+            find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name 'SHA256SUMS.txt' \) | sort
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
       - name: publish github release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
         with:
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/SHA256SUMS.txt
+          files: ${{ steps.release_files.outputs.files }}
           body: |
             Supported Claude versions verified: 2.1.84
             Supported OS live-verified: Linux

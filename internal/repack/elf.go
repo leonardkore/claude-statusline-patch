@@ -23,7 +23,12 @@ func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode o
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tempName := temp.Name()
-	defer os.Remove(tempName)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempName)
+		}
+	}()
 
 	if _, err := temp.Write(data); err != nil {
 		temp.Close()
@@ -47,6 +52,7 @@ func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode o
 	if err := os.Rename(tempName, targetPath); err != nil {
 		return fmt.Errorf("rename temp file: %w", err)
 	}
+	committed = true
 	if err := syncDir(dir); err != nil {
 		return err
 	}
