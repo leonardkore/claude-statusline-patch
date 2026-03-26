@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/leonardkore/claude-statusline-patch/internal/fileutil"
 )
 
 const appDirName = "claude-statusline-patch"
@@ -278,7 +280,7 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := syncDir(dir); err != nil {
 		return err
 	}
-	if err := os.Rename(tempName, path); err != nil {
+	if err := fileutil.ReplaceFile(tempName, path); err != nil {
 		return fmt.Errorf("rename temp file for %s: %w", path, err)
 	}
 	committed = true

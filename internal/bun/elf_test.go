@@ -137,6 +137,9 @@ func TestParseModuleGraphAndReplaceContents(t *testing.T) {
 	if !bytes.Contains(replacedContents, []byte("1000")) {
 		t.Fatalf("expected replaced contents to contain updated interval")
 	}
+	if reparsed.Offsets.CompileExecArgvPtr.Offset <= graph.Offsets.CompileExecArgvPtr.Offset {
+		t.Fatalf("expected zero-length compile argv pointer to shift forward")
+	}
 }
 
 func TestShiftPointerAtExactOffset(t *testing.T) {
@@ -152,6 +155,26 @@ func TestShiftPointerAtExactOffset(t *testing.T) {
 func TestShiftPointerRejectsNegativeOffset(t *testing.T) {
 	if _, err := shiftPointer(StringPointer{Offset: 5, Length: 4}, 0, -8); err == nil {
 		t.Fatalf("expected underflow error")
+	}
+}
+
+func TestShiftPointerMovesZeroLengthNonZeroOffset(t *testing.T) {
+	shifted, err := shiftPointer(StringPointer{Offset: 12, Length: 0}, 4, 3)
+	if err != nil {
+		t.Fatalf("shiftPointer failed: %v", err)
+	}
+	if shifted.Offset != 15 {
+		t.Fatalf("expected offset 15, got %d", shifted.Offset)
+	}
+}
+
+func TestShiftPointerLeavesNullPointerUnchanged(t *testing.T) {
+	shifted, err := shiftPointer(StringPointer{Offset: 0, Length: 0}, 0, 3)
+	if err != nil {
+		t.Fatalf("shiftPointer failed: %v", err)
+	}
+	if shifted.Offset != 0 {
+		t.Fatalf("expected null pointer offset 0, got %d", shifted.Offset)
 	}
 }
 

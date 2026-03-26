@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/leonardkore/claude-statusline-patch/internal/backup"
+	"github.com/leonardkore/claude-statusline-patch/internal/fileutil"
 )
 
 func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode os.FileMode) error {
@@ -49,7 +50,7 @@ func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode o
 	if err := syncDir(dir); err != nil {
 		return err
 	}
-	if err := os.Rename(tempName, targetPath); err != nil {
+	if err := fileutil.ReplaceFile(tempName, targetPath); err != nil {
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 	committed = true

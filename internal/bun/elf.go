@@ -424,7 +424,7 @@ func encodePointer(dst []byte, pointer StringPointer) {
 }
 
 func shiftPointer(pointer StringPointer, replacedOffset int, delta int) (StringPointer, error) {
-	if pointer.Length == 0 {
+	if pointer.Length == 0 && pointer.Offset == 0 {
 		return pointer, nil
 	}
 	if int(pointer.Offset) >= replacedOffset {
