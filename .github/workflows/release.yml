@@ -119,6 +119,14 @@ jobs:
         with:
           files: ${{ steps.release_files.outputs.files }}
           body: |
+            Changelog: initial public release of the Claude statusline fixed-interval patch CLI.
+
             Supported Claude versions verified: 2.1.84
             Supported OS live-verified: Linux
+            Supported binary targets: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64, windows-amd64
+            Assets attached: platform binaries plus SHA256SUMS.txt
+            
+            Install:
+            go install github.com/leonardkore/claude-statusline-patch@${{ github.ref_name }}
+
             Warning: only Linux + Claude 2.1.84 is live-verified unless more testing was actually done.
