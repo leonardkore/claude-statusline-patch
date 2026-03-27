@@ -83,18 +83,14 @@ func runApply(args []string) int {
 			return 0
 		}
 		return fail(fmt.Errorf("binary is already patched at %dms; run restore before applying a different interval", inspection.IntervalMS))
-	case patch.StateAmbiguous:
-		return fail(errors.New("refusing to patch: statusline match is ambiguous"))
-	case patch.StateUnsupported:
-		return fail(fmt.Errorf("refusing to patch unsupported binary version %q; only Claude %s is supported", inspection.Version, patch.SupportedVersion))
+	case patch.StateAmbiguousShape:
+		return fail(errors.New("refusing to patch: statusline shape match is ambiguous"))
+	case patch.StateUnrecognizedShape:
+		return fail(fmt.Errorf("refusing to patch unrecognized statusline shape for Claude version %q", inspection.Version))
 	case patch.StateUnpatched:
 		// continue
 	default:
 		return fail(fmt.Errorf("refusing to patch unknown state %q", inspection.State))
-	}
-
-	if inspection.Version != patch.SupportedVersion {
-		return fail(fmt.Errorf("refusing to patch Claude version %q; only %s is supported", inspection.Version, patch.SupportedVersion))
 	}
 
 	backupPath, err := backup.EnsureBackup(resolved.CanonicalPath, originalHash, originalBytes)
@@ -185,8 +181,18 @@ func runCheck(args []string) int {
 	fmt.Printf("binary: %s\n", resolved.CanonicalPath)
 	fmt.Printf("version: %s\n", inspection.Version)
 	fmt.Printf("state: %s\n", inspection.State)
+	if inspection.ShapeState == patch.ShapeStateKnown {
+		fmt.Printf("shape_id: %s\n", inspection.ShapeID)
+	}
+	fmt.Printf("shape_state: %s\n", inspection.ShapeState)
+	fmt.Printf("patch_state: %s\n", inspection.PatchState)
 	if inspection.State == patch.StatePatched {
 		fmt.Printf("interval_ms: %d\n", inspection.IntervalMS)
+	}
+	if inspection.LiveVerified {
+		fmt.Printf("verification_claim: live-verified\n")
+	} else {
+		fmt.Printf("verification_claim: not-live-verified\n")
 	}
 	fmt.Printf("managed: %t\n", managed != nil)
 
@@ -195,9 +201,9 @@ func runCheck(args []string) int {
 		return 0
 	case patch.StateUnpatched:
 		return 1
-	case patch.StateUnsupported:
+	case patch.StateUnrecognizedShape:
 		return 2
-	case patch.StateAmbiguous:
+	case patch.StateAmbiguousShape:
 		return 4
 	default:
 		return 3

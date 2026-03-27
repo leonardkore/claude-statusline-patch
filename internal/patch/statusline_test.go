@@ -7,20 +7,48 @@ import (
 	"testing"
 )
 
-func TestInspectUnpatchedFixture(t *testing.T) {
-	payload := append(versionBytes(SupportedVersion), loadFixture(t, "statusline-unpatched.js")...)
+func TestInspectKnownUnpatchedFixtures(t *testing.T) {
+	t.Parallel()
 
-	inspection := Inspect(payload)
-	if inspection.State != StateUnpatched {
-		t.Fatalf("expected unpatched, got %s", inspection.State)
+	cases := []struct {
+		name        string
+		version     string
+		fixtureName string
+		verified    bool
+	}{
+		{name: "2.1.84", version: "2.1.84", fixtureName: "statusline-unpatched.js", verified: true},
+		{name: "2.1.85", version: "2.1.85", fixtureName: "statusline-unpatched-2.1.85.js", verified: true},
 	}
-	if inspection.Version != SupportedVersion {
-		t.Fatalf("expected version %s, got %s", SupportedVersion, inspection.Version)
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			payload := append(versionBytes(tc.version), loadFixture(t, tc.fixtureName)...)
+
+			inspection := Inspect(payload)
+			if inspection.State != StateUnpatched {
+				t.Fatalf("expected unpatched, got %s", inspection.State)
+			}
+			if inspection.ShapeState != ShapeStateKnown {
+				t.Fatalf("expected known shape, got %s", inspection.ShapeState)
+			}
+			if inspection.PatchState != PatchStateUnpatched {
+				t.Fatalf("expected patch_state unpatched, got %s", inspection.PatchState)
+			}
+			if inspection.ShapeID != ShapeIDStatuslineDebounceV1 {
+				t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV1, inspection.ShapeID)
+			}
+			if inspection.LiveVerified != tc.verified {
+				t.Fatalf("expected live verified %t, got %t", tc.verified, inspection.LiveVerified)
+			}
+		})
 	}
 }
 
 func TestApplyIsIdempotentForSameInterval(t *testing.T) {
-	payload := append(versionBytes(SupportedVersion), loadFixture(t, "statusline-unpatched.js")...)
+	t.Parallel()
+
+	payload := append(versionBytes("2.1.84"), loadFixture(t, "statusline-unpatched.js")...)
 
 	patched, err := Apply(payload, 1000)
 	if err != nil {
@@ -38,57 +66,106 @@ func TestApplyIsIdempotentForSameInterval(t *testing.T) {
 }
 
 func TestInspectFailsCleanlyOnUnknownShape(t *testing.T) {
-	payload := append(versionBytes(SupportedVersion), []byte("console.log('unknown shape');")...)
+	t.Parallel()
+
+	payload := append(versionBytes("2.1.85"), []byte("console.log('unknown shape');")...)
 
 	inspection := Inspect(payload)
-	if inspection.State != StateAmbiguous {
-		t.Fatalf("expected ambiguous, got %s", inspection.State)
+	if inspection.State != StateUnrecognizedShape {
+		t.Fatalf("expected unrecognized shape, got %s", inspection.State)
+	}
+	if inspection.ShapeState != ShapeStateUnrecognized {
+		t.Fatalf("expected unrecognized shape_state, got %s", inspection.ShapeState)
 	}
 }
 
 func TestInspectPatchedVsUnpatchedFixtures(t *testing.T) {
-	unpatched := append(versionBytes(SupportedVersion), loadFixture(t, "statusline-unpatched.js")...)
-	patched := append(versionBytes(SupportedVersion), loadFixture(t, "statusline-patched-1000.js")...)
+	t.Parallel()
 
-	unpatchedInspection := Inspect(unpatched)
-	patchedInspection := Inspect(patched)
-
-	if unpatchedInspection.State != StateUnpatched {
-		t.Fatalf("expected unpatched, got %s", unpatchedInspection.State)
+	cases := []struct {
+		name             string
+		version          string
+		unpatchedFixture string
+		patchedFixture   string
+	}{
+		{name: "2.1.84", version: "2.1.84", unpatchedFixture: "statusline-unpatched.js", patchedFixture: "statusline-patched-1000.js"},
+		{name: "2.1.85", version: "2.1.85", unpatchedFixture: "statusline-unpatched-2.1.85.js", patchedFixture: "statusline-patched-1000-2.1.85.js"},
 	}
-	if patchedInspection.State != StatePatched || patchedInspection.IntervalMS != 1000 {
-		t.Fatalf("unexpected patched inspection: %+v", patchedInspection)
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			unpatched := append(versionBytes(tc.version), loadFixture(t, tc.unpatchedFixture)...)
+			patched := append(versionBytes(tc.version), loadFixture(t, tc.patchedFixture)...)
+
+			unpatchedInspection := Inspect(unpatched)
+			patchedInspection := Inspect(patched)
+
+			if unpatchedInspection.State != StateUnpatched {
+				t.Fatalf("expected unpatched, got %s", unpatchedInspection.State)
+			}
+			if patchedInspection.State != StatePatched || patchedInspection.IntervalMS != 1000 {
+				t.Fatalf("unexpected patched inspection: %+v", patchedInspection)
+			}
+			if patchedInspection.ShapeID != ShapeIDStatuslineDebounceV1 {
+				t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV1, patchedInspection.ShapeID)
+			}
+		})
 	}
 }
 
 func TestApplyProducesExpectedPatchedFixture(t *testing.T) {
-	payload := append(versionBytes(SupportedVersion), loadFixture(t, "statusline-unpatched.js")...)
-	expected := append(versionBytes(SupportedVersion), loadFixture(t, "statusline-patched-1000.js")...)
+	t.Parallel()
 
-	patched, err := Apply(payload, 1000)
-	if err != nil {
-		t.Fatalf("apply failed: %v", err)
+	cases := []struct {
+		name             string
+		version          string
+		unpatchedFixture string
+		patchedFixture   string
+	}{
+		{name: "2.1.84", version: "2.1.84", unpatchedFixture: "statusline-unpatched.js", patchedFixture: "statusline-patched-1000.js"},
+		{name: "2.1.85", version: "2.1.85", unpatchedFixture: "statusline-unpatched-2.1.85.js", patchedFixture: "statusline-patched-1000-2.1.85.js"},
 	}
-	if !bytes.Equal(patched, expected) {
-		t.Fatalf("patched payload does not match expected fixture")
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			payload := append(versionBytes(tc.version), loadFixture(t, tc.unpatchedFixture)...)
+			expected := append(versionBytes(tc.version), loadFixture(t, tc.patchedFixture)...)
+
+			patched, err := Apply(payload, 1000)
+			if err != nil {
+				t.Fatalf("apply failed: %v", err)
+			}
+			if !bytes.Equal(patched, expected) {
+				t.Fatalf("patched payload does not match expected fixture")
+			}
+		})
 	}
 }
 
-func TestInspectMalformedPatchedIntervalIsAmbiguous(t *testing.T) {
-	payload := append(versionBytes(SupportedVersion), append(append([]byte(nil), patchedPrefix...), append(bytes.Repeat([]byte("9"), 32), patchedSuffix...)...)...)
+func TestInspectMalformedPatchedIntervalIsUnrecognized(t *testing.T) {
+	t.Parallel()
+
+	payload := append(versionBytes("2.1.85"), []byte(`,unused1=tX.useEffect(()=>{const id=setInterval(()=>L(),99999999999999999999999999999999);return()=>clearInterval(id);},[L]),Z=tX.useCallback(()=>{},[]);tX.useEffect(()=>{if($!==X.current.messageId||_!==X.current.permissionMode||q!==X.current.vimMode)X.current.permissionMode=_,X.current.vimMode=q,Z()},[$,_,q,Z]);`)...)
 
 	inspection := Inspect(payload)
-	if inspection.State != StateAmbiguous {
-		t.Fatalf("expected ambiguous, got %s", inspection.State)
+	if inspection.State != StateUnrecognizedShape {
+		t.Fatalf("expected unrecognized shape, got %s", inspection.State)
 	}
 }
 
 func TestInspectDuplicateMatchesAreAmbiguous(t *testing.T) {
-	payload := append(versionBytes(SupportedVersion), append(loadFixture(t, "statusline-unpatched.js"), loadFixture(t, "statusline-unpatched.js")...)...)
+	t.Parallel()
+
+	payload := append(versionBytes("2.1.85"), append(loadFixture(t, "statusline-unpatched-2.1.85.js"), loadFixture(t, "statusline-unpatched-2.1.85.js")...)...)
 
 	inspection := Inspect(payload)
-	if inspection.State != StateAmbiguous {
-		t.Fatalf("expected ambiguous, got %s", inspection.State)
+	if inspection.State != StateAmbiguousShape {
+		t.Fatalf("expected ambiguous shape, got %s", inspection.State)
+	}
+	if inspection.ShapeState != ShapeStateAmbiguous {
+		t.Fatalf("expected ambiguous shape_state, got %s", inspection.ShapeState)
 	}
 }
 

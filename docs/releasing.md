@@ -2,9 +2,10 @@
 
 Phase 1 release policy is strict:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`
 - other OS binaries may be built and attached, but they must not be described as live-verified unless they were actually tested
 - no `tweakcc` integration, no hook logic, no auto-update logic
+- support for a new Claude version is a patch release unless the CLI contract changes
 
 ## Pre-merge
 
@@ -21,7 +22,7 @@ Before opening a PR:
 
 The PR must record:
 
-- Claude version tested: `2.1.84`
+- Claude version tested: exact tested version(s), for example `2.1.84`, `2.1.85`
 - OS tested: Linux
 - architecture tested: `x86_64`
 - external patchers inactive during verification: yes
@@ -45,8 +46,8 @@ Commands:
 ```bash
 git checkout main
 git pull --ff-only
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.2 -m "v0.1.2"
+git push origin v0.1.2
 ```
 
 Do not tag from the feature branch.
@@ -57,19 +58,19 @@ Do not create a release before merge.
 Release title:
 
 ```text
-v0.1.0
+v0.1.2
 ```
 
 Release notes must include:
 
-- supported Claude versions verified: `2.1.84`
+- supported Claude versions verified: `2.1.84`, `2.1.85`
 - supported OS live-verified: Linux
 - binaries attached for each target in the build matrix
 - `SHA256SUMS.txt`
 - install instructions:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@v0.1.0
+go install github.com/leonardkore/claude-statusline-patch@v0.1.2
 ```
 
-- warning that only Linux + Claude `2.1.84` is live-verified unless more testing was actually done
+- warning that only Linux + Claude `2.1.84`, `2.1.85` are live-verified unless more testing was actually done
