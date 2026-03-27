@@ -24,7 +24,7 @@ Other OS binaries may be built for release distribution, but they are not claime
 Tagged-release install path:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@v0.1.2
+go install github.com/leonardkore/claude-statusline-patch@v0.1.3
 ```
 
 ## Usage
