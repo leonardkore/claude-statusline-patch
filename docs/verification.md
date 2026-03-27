@@ -6,6 +6,7 @@ Phase 1 only claims live verification for:
 - `x86_64`
 - Claude Code `2.1.84`
 - Claude Code `2.1.85`
+- Claude Code `2.1.86`
 
 Other OS binaries may be built, but they are not claimed as verified unless they were actually tested.
 
@@ -109,6 +110,10 @@ Observed live-verified results on Linux `x86_64`:
   - patched `on -> [0,1,2,3,4,5,6]`
   - restored `off -> [0]`
 - Claude Code `2.1.85`
+  - baseline `off -> [0]`
+  - patched `on -> [0,1,2,3,4,5,6]`
+  - restored `off -> [0]`
+- Claude Code `2.1.86`
   - baseline `off -> [0]`
   - patched `on -> [0,1,2,3,4,5,6]`
   - restored `off -> [0]`

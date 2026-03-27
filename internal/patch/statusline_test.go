@@ -115,6 +115,7 @@ func TestApplyProducesManifestPatchedFixtures(t *testing.T) {
 	}{
 		{unpatchedID: "claude-2.1.84-unpatched", patchedID: "claude-2.1.84-patched-1000"},
 		{unpatchedID: "claude-2.1.85-unpatched", patchedID: "claude-2.1.85-patched-1000"},
+		{unpatchedID: "claude-2.1.86-unpatched", patchedID: "claude-2.1.86-patched-1000"},
 	}
 
 	for _, tc := range cases {
@@ -174,6 +175,26 @@ func TestKnownShapeStillPatchesForUnverifiedVersion(t *testing.T) {
 	}
 }
 
+func TestKnownShapeV2StillPatchesForUnverifiedVersion(t *testing.T) {
+	t.Parallel()
+
+	payload := append(versionBytes("9.9.9"), loadFixture(t, "claude-2.1.86-unpatched.js")...)
+
+	inspection := Inspect(payload)
+	if inspection.State != StateUnpatched {
+		t.Fatalf("expected unpatched, got %s", inspection.State)
+	}
+	if inspection.ShapeID != ShapeIDStatuslineDebounceV2 {
+		t.Fatalf("expected known shape id, got %s", inspection.ShapeID)
+	}
+	if IsDocumentedLiveVerifiedVersion(inspection.Version) {
+		t.Fatalf("did not expect synthetic version to be documented live-verified")
+	}
+	if _, err := ApplyInspection(payload, inspection, 1000); err != nil {
+		t.Fatalf("expected quick-apply known shape to patch, got %v", err)
+	}
+}
+
 func TestExtractMatchedSnippetReturnsKnownSnippet(t *testing.T) {
 	t.Parallel()
 
@@ -185,6 +206,23 @@ func TestExtractMatchedSnippetReturnsKnownSnippet(t *testing.T) {
 	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.85-unpatched.js"))
 	if inspection.ShapeID != ShapeIDStatuslineDebounceV1 {
 		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV1, inspection.ShapeID)
+	}
+	if !bytes.Equal(snippet, expected) {
+		t.Fatalf("expected extracted snippet to match fixture bytes")
+	}
+}
+
+func TestExtractMatchedSnippetReturnsKnownSnippetV2(t *testing.T) {
+	t.Parallel()
+
+	payload := fixturePayloadByID(t, "claude-2.1.86-unpatched")
+	snippet, inspection, err := ExtractMatchedSnippet(payload)
+	if err != nil {
+		t.Fatalf("extract matched snippet failed: %v", err)
+	}
+	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.86-unpatched.js"))
+	if inspection.ShapeID != ShapeIDStatuslineDebounceV2 {
+		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV2, inspection.ShapeID)
 	}
 	if !bytes.Equal(snippet, expected) {
 		t.Fatalf("expected extracted snippet to match fixture bytes")
@@ -230,6 +268,15 @@ func TestInspectForeignContentIsUnrecognized(t *testing.T) {
 	}
 	if inspection.PatchState != PatchStateUnknown {
 		t.Fatalf("expected unknown patch state, got %s", inspection.PatchState)
+	}
+}
+
+func TestDetectVersionPrefersClaudeMetadataVersion(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`IMDS_VERSION:"2020-06-01",PACKAGE_URL:"@anthropic-ai/claude-code",README_URL:"https://code.claude.com/docs/en/overview",VERSION:"2.1.86",FEEDBACK_CHANNEL:"https://github.com/anthropics/claude-code/issues",BUILD_TIME:"2026-03-27T20:29:28Z"`)
+	if got := DetectVersion(payload); got != "2.1.86" {
+		t.Fatalf("expected 2.1.86, got %q", got)
 	}
 }
 
