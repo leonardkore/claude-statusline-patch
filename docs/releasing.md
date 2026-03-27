@@ -46,8 +46,8 @@ Commands:
 ```bash
 git checkout main
 git pull --ff-only
-git tag -a <next-release-version> -m "<next-release-version>"
-git push origin <next-release-version>
+git tag -a <next-release-tag-vX.Y.Z> -m "<next-release-tag-vX.Y.Z>"
+git push origin <next-release-tag-vX.Y.Z>
 ```
 
 Example:
@@ -65,7 +65,7 @@ Do not create a release before merge.
 Release title:
 
 ```text
-<next-release-version>
+<next-release-tag-vX.Y.Z>
 ```
 
 Release notes must include:
@@ -77,7 +77,7 @@ Release notes must include:
 - install instructions:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@<next-release-version>
+go install github.com/leonardkore/claude-statusline-patch@<next-release-tag-vX.Y.Z>
 ```
 
 - warning that only Linux + Claude `2.1.84`, `2.1.85` are live-verified unless more testing was actually done
