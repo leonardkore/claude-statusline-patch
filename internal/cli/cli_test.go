@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/backup"
 	"github.com/leonardkore/claude-statusline-patch/internal/bun"
 	"github.com/leonardkore/claude-statusline-patch/internal/patch"
+	"github.com/leonardkore/claude-statusline-patch/internal/repack"
 )
 
 func TestFormatCheckOutputIncludesKnownShapeAndSupportClaim(t *testing.T) {
@@ -142,8 +144,9 @@ func TestManifestSupportClaimsMatchRuntimeLogic(t *testing.T) {
 		fixture := fixture
 		t.Run(fixture.ID, func(t *testing.T) {
 			inspection := patch.Inspect(fixturePayload(t, fixture))
-			if got := supportClaim(inspection); got != fixture.SupportClaim {
-				t.Fatalf("expected support claim %s, got %s", fixture.SupportClaim, got)
+			want := expectedRuntimeSupportClaim(fixture, inspection)
+			if got := supportClaim(inspection); got != want {
+				t.Fatalf("expected support claim %s, got %s", want, got)
 			}
 		})
 	}
@@ -320,15 +323,69 @@ func TestRunApplyDryRunUnrecognizedShapeReportsBlocked(t *testing.T) {
 	}
 }
 
+func TestRunApplyPreservesNewBackupWhenAtomicWriteFailsAfterCommit(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	binaryPath := writeTestBinary(t, tempDir, "unpatched-2.1.85-late-failure", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+	originalBytes := mustReadFile(t, binaryPath)
+	originalHash := backup.SHA256Bytes(originalBytes)
+
+	originalWriter := writeBinaryAtomically
+	t.Cleanup(func() {
+		writeBinaryAtomically = originalWriter
+	})
+
+	callCount := 0
+	writeBinaryAtomically = func(path, expectedCurrentHash string, data []byte, mode os.FileMode) error {
+		callCount++
+		if callCount != 1 {
+			return originalWriter(path, expectedCurrentHash, data, mode)
+		}
+		if err := os.WriteFile(path, data, mode); err != nil {
+			t.Fatalf("simulate committed write: %v", err)
+		}
+		return repack.NewPostCommitError(errors.New("sync directory: simulated late failure"))
+	}
+
+	exitCode, stdout, stderr := captureRunApply(t, "--binary", binaryPath, "--interval-ms", "1000")
+	if exitCode != 1 {
+		t.Fatalf("expected apply failure, got exit %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "simulated late failure") {
+		t.Fatalf("expected stderr to mention late failure, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "A backup of the original binary was preserved at:") {
+		t.Fatalf("expected stderr to include backup recovery hint, got %q", stderr)
+	}
+
+	backupPath, err := backup.ExpectedBackupPath(binaryPath, originalHash)
+	if err != nil {
+		t.Fatalf("ExpectedBackupPath failed: %v", err)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("expected backup to be preserved after late write failure: %v", err)
+	}
+	if !strings.Contains(stderr, backupPath) {
+		t.Fatalf("expected stderr to include backup path %s, got %q", backupPath, stderr)
+	}
+}
+
 type fixtureManifest struct {
 	Fixtures []fixtureRecord `json:"fixtures"`
 }
 
 type fixtureRecord struct {
-	ID           string `json:"id"`
-	Path         string `json:"path"`
-	Version      string `json:"version"`
-	SupportClaim string `json:"support_claim"`
+	ID            string `json:"id"`
+	Path          string `json:"path"`
+	Version       string `json:"version"`
+	State         string `json:"state"`
+	PatchState    string `json:"patch_state"`
+	Authoritative bool   `json:"authoritative"`
+	SupportClaim  string `json:"support_claim"`
 }
 
 func loadManifest(t *testing.T) fixtureManifest {
@@ -399,6 +456,23 @@ func captureRunApply(t *testing.T, args ...string) (int, string, string) {
 	_ = stderrR.Close()
 
 	return exitCode, string(stdoutBytes), string(stderrBytes)
+}
+
+func expectedRuntimeSupportClaim(fixture fixtureRecord, inspection patch.Inspection) string {
+	switch fixture.SupportClaim {
+	case "undocumented":
+		return "undocumented"
+	case "live_verified":
+		if inspection.ShapeState == patch.ShapeStateKnown && inspection.PatchState != patch.PatchStateUnknown && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+			return "live_verified"
+		}
+		if inspection.ShapeState == patch.ShapeStateKnown && inspection.PatchState != patch.PatchStateUnknown {
+			return "patchable_only"
+		}
+		return "undocumented"
+	default:
+		return fixture.SupportClaim
+	}
 }
 
 func writeTestBinary(t *testing.T, dir, name string, entryContents []byte) string {

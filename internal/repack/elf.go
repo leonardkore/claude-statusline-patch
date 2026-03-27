@@ -1,6 +1,7 @@
 package repack
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,19 +10,57 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/fileutil"
 )
 
+type writeStage string
+
+const (
+	writeStagePreCommit  writeStage = "pre_commit"
+	writeStagePostCommit writeStage = "post_commit"
+)
+
+type AtomicWriteError struct {
+	stage writeStage
+	err   error
+}
+
+func (e *AtomicWriteError) Error() string {
+	return fmt.Sprintf("%s atomic write failure: %v", e.stage, e.err)
+}
+
+func (e *AtomicWriteError) Unwrap() error {
+	return e.err
+}
+
+func (e *AtomicWriteError) Stage() string {
+	return string(e.stage)
+}
+
+func TargetMayHaveChanged(err error) bool {
+	var atomicErr *AtomicWriteError
+	return errors.As(err, &atomicErr) && atomicErr.stage == writeStagePostCommit
+}
+
+func NewPostCommitError(err error) error {
+	return &AtomicWriteError{stage: writeStagePostCommit, err: err}
+}
+
+var (
+	sha256File  = backup.SHA256File
+	replaceFile = fileutil.ReplaceFile
+)
+
 func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode os.FileMode) error {
-	currentHash, err := backup.SHA256File(targetPath)
+	currentHash, err := sha256File(targetPath)
 	if err != nil {
-		return fmt.Errorf("hash current target: %w", err)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("hash current target: %w", err)}
 	}
 	if currentHash != expectedCurrentHash {
-		return fmt.Errorf("target changed during patch transaction: expected %s, found %s", expectedCurrentHash, currentHash)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("target changed during patch transaction: expected %s, found %s", expectedCurrentHash, currentHash)}
 	}
 
 	dir := filepath.Dir(targetPath)
 	temp, err := os.CreateTemp(dir, filepath.Base(targetPath)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("create temp file: %w", err)}
 	}
 	tempName := temp.Name()
 	committed := false
@@ -33,29 +72,36 @@ func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode o
 
 	if _, err := temp.Write(data); err != nil {
 		temp.Close()
-		return fmt.Errorf("write temp file: %w", err)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("write temp file: %w", err)}
 	}
 	if err := temp.Chmod(mode); err != nil {
 		temp.Close()
-		return fmt.Errorf("chmod temp file: %w", err)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("chmod temp file: %w", err)}
 	}
 	if err := temp.Sync(); err != nil {
 		temp.Close()
-		return fmt.Errorf("sync temp file: %w", err)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("sync temp file: %w", err)}
 	}
 	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("close temp file: %w", err)}
 	}
 
 	if err := syncDir(dir); err != nil {
-		return err
+		return &AtomicWriteError{stage: writeStagePreCommit, err: err}
 	}
-	if err := fileutil.ReplaceFile(tempName, targetPath); err != nil {
-		return fmt.Errorf("rename temp file: %w", err)
+	currentHash, err = sha256File(targetPath)
+	if err != nil {
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("re-hash current target before swap: %w", err)}
+	}
+	if currentHash != expectedCurrentHash {
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("target changed during patch transaction before final swap: expected %s, found %s", expectedCurrentHash, currentHash)}
+	}
+	if err := replaceFile(tempName, targetPath); err != nil {
+		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("rename temp file: %w", err)}
 	}
 	committed = true
 	if err := syncDir(dir); err != nil {
-		return err
+		return &AtomicWriteError{stage: writeStagePostCommit, err: err}
 	}
 	return nil
 }

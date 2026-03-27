@@ -131,6 +131,13 @@ func EnsureBackup(canonicalPath, originalHash string, data []byte) (string, bool
 		if info.Size() != int64(len(data)) {
 			return "", false, fmt.Errorf("existing backup size mismatch for %s: expected %d, found %d", backupPath, len(data), info.Size())
 		}
+		backupHash, err := SHA256File(backupPath)
+		if err != nil {
+			return "", false, fmt.Errorf("hash existing backup %s: %w", backupPath, err)
+		}
+		if backupHash != originalHash {
+			return "", false, fmt.Errorf("existing backup hash mismatch for %s: expected %s, found %s", backupPath, originalHash, backupHash)
+		}
 		return backupPath, false, nil
 	} else if !os.IsNotExist(err) {
 		return "", false, fmt.Errorf("stat existing backup: %w", err)
