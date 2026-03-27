@@ -33,7 +33,7 @@ func Main(args []string) int {
 	case "restore":
 		return runRestore(args[1:])
 	case "version":
-		fmt.Println(version.Version)
+		fmt.Println(version.String())
 		return 0
 	default:
 		printUsage(os.Stderr)
