@@ -120,6 +120,9 @@ func runApply(args []string) int {
 	}
 
 	if err := writeBinaryAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
+		if repack.TargetMayHaveChanged(err) {
+			return fail(fmt.Errorf("%w\n\nThe target binary may already have been modified after patching.\nA backup of the original binary was preserved at:\n  %s\nUse `claude-statusline-patch restore --binary %s` if the binary still matches the managed patched hash, or restore the backup manually from that path if needed.", err, backupPath, resolved.CanonicalPath))
+		}
 		if !repack.TargetMayHaveChanged(err) {
 			cleanupBackup()
 		}

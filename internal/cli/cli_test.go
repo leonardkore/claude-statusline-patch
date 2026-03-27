@@ -358,6 +358,9 @@ func TestRunApplyPreservesNewBackupWhenAtomicWriteFailsAfterCommit(t *testing.T)
 	if !strings.Contains(stderr, "simulated late failure") {
 		t.Fatalf("expected stderr to mention late failure, got %q", stderr)
 	}
+	if !strings.Contains(stderr, "A backup of the original binary was preserved at:") {
+		t.Fatalf("expected stderr to include backup recovery hint, got %q", stderr)
+	}
 
 	backupPath, err := backup.ExpectedBackupPath(binaryPath, originalHash)
 	if err != nil {
@@ -365,6 +368,9 @@ func TestRunApplyPreservesNewBackupWhenAtomicWriteFailsAfterCommit(t *testing.T)
 	}
 	if _, err := os.Stat(backupPath); err != nil {
 		t.Fatalf("expected backup to be preserved after late write failure: %v", err)
+	}
+	if !strings.Contains(stderr, backupPath) {
+		t.Fatalf("expected stderr to include backup path %s, got %q", backupPath, stderr)
 	}
 }
 

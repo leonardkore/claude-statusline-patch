@@ -23,11 +23,15 @@ type AtomicWriteError struct {
 }
 
 func (e *AtomicWriteError) Error() string {
-	return e.err.Error()
+	return fmt.Sprintf("%s atomic write failure: %v", e.stage, e.err)
 }
 
 func (e *AtomicWriteError) Unwrap() error {
 	return e.err
+}
+
+func (e *AtomicWriteError) Stage() string {
+	return string(e.stage)
 }
 
 func TargetMayHaveChanged(err error) bool {

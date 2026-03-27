@@ -101,4 +101,10 @@ func TestTargetMayHaveChangedRecognizesPostCommitErrors(t *testing.T) {
 	if !TargetMayHaveChanged(err) {
 		t.Fatalf("expected post-commit error to report changed target")
 	}
+	if err.Stage() != "post_commit" {
+		t.Fatalf("expected stage post_commit, got %s", err.Stage())
+	}
+	if got := err.Error(); got != "post_commit atomic write failure: sync directory: boom" {
+		t.Fatalf("unexpected error string %q", got)
+	}
 }
