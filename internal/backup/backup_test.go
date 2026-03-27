@@ -3,6 +3,7 @@ package backup
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -154,5 +155,36 @@ func TestEnsureBackupReportsWhetherItCreatedTheBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected backup to be removed, got err=%v", err)
+	}
+}
+
+func TestEnsureBackupRejectsExistingBackupHashMismatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	canonicalPath := filepath.Join(home, "bin", "claude")
+	contents := []byte("original-binary")
+	originalHash := SHA256Bytes(contents)
+
+	backupPath, err := ExpectedBackupPath(canonicalPath, originalHash)
+	if err != nil {
+		t.Fatalf("ExpectedBackupPath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(backupPath), stateDirMode); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(backupPath, []byte("tampered-binary"), backupFileMode); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, created, err := EnsureBackup(canonicalPath, originalHash, contents)
+	if err == nil {
+		t.Fatalf("expected existing backup hash mismatch")
+	}
+	if created {
+		t.Fatalf("expected mismatched backup not to be reported as newly created")
+	}
+	if got := filepath.Base(backupPath); !strings.Contains(err.Error(), got) {
+		t.Fatalf("expected error to mention backup path %s, got %v", got, err)
 	}
 }

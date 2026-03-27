@@ -20,6 +20,8 @@ import (
 
 const maxBinarySizeBytes int64 = 1 << 30
 
+var writeBinaryAtomically = repack.WriteAtomically
+
 func Main(args []string) int {
 	if len(args) == 0 {
 		printUsage(os.Stderr)
@@ -117,8 +119,10 @@ func runApply(args []string) int {
 		}
 	}
 
-	if err := repack.WriteAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
-		cleanupBackup()
+	if err := writeBinaryAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
+		if !repack.TargetMayHaveChanged(err) {
+			cleanupBackup()
+		}
 		return fail(err)
 	}
 
@@ -132,7 +136,7 @@ func runApply(args []string) int {
 		BackupPath:      backupPath,
 		FileMode:        uint32(resolved.Mode.Perm()),
 	}); err != nil {
-		rollbackErr := repack.WriteAtomically(resolved.CanonicalPath, patchedHash, originalBytes, resolved.Mode)
+		rollbackErr := writeBinaryAtomically(resolved.CanonicalPath, patchedHash, originalBytes, resolved.Mode)
 		if rollbackErr != nil {
 			return fail(fmt.Errorf("save metadata: %v; rollback failed: %w", err, rollbackErr))
 		}
@@ -325,7 +329,7 @@ func runRestore(args []string) int {
 		mode = resolved.Mode
 	}
 
-	if err := repack.WriteAtomically(resolved.CanonicalPath, currentHash, backupBytes, mode); err != nil {
+	if err := writeBinaryAtomically(resolved.CanonicalPath, currentHash, backupBytes, mode); err != nil {
 		return fail(err)
 	}
 	if err := backup.DeleteMetadata(resolved.CanonicalPath, managed.OriginalSHA256); err != nil {
