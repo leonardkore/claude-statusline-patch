@@ -8,6 +8,7 @@ Phase 1 scope is intentionally small:
 - public commands: `apply`, `check`, `restore`, `version`
 - default interval: `1000ms`
 - transactional binary replacement with tool-owned backup state
+- `apply --dry-run` preflight uses the real apply/rebuild path without mutating the binary
 
 Phase 1 does **not** include:
 
@@ -55,6 +56,12 @@ Apply the fixed interval patch:
 claude-statusline-patch apply --interval-ms 1000
 ```
 
+Preflight the same apply path without writing:
+
+```bash
+claude-statusline-patch apply --dry-run --interval-ms 1000
+```
+
 Restore the original binary from this tool's managed backup:
 
 ```bash
@@ -74,6 +81,15 @@ All commands also accept:
 ```
 
 By default the CLI resolves `~/.local/bin/claude`, follows symlinks to the canonical installed binary, and patches any uniquely recognized statusline shape family that passes rebuild validation.
+
+`check` reports:
+
+- `shape_id` and `observed_versions` when the current binary matches a known family
+- `support_claim` as one of:
+  - `live_verified`
+  - `patchable_only`
+  - `undocumented`
+- `quick_apply_candidate: true` when the binary is in a uniquely known unpatched shape
 
 ## Backup State
 
@@ -100,5 +116,13 @@ Phase 1 support claims are intentionally strict:
 - verified Claude versions: `2.1.84`, `2.1.85`
 - verified OS: Linux
 - verified architecture: `x86_64`
+
+## Compatibility Table
+
+| Platform | Claude version | Shape family | Structurally patchable | Live-verified | First supporting release | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| Linux `x86_64` | `2.1.84` | `statusline_debounce_v1` | yes | yes | `v0.1.2` | real unpatched fixture and generated patched fixture tracked |
+| Linux `x86_64` | `2.1.85` | `statusline_debounce_v1` | yes | yes | `v0.1.2` | real unpatched fixture and generated patched fixture tracked |
+| Linux `x86_64` | future version with known family | `statusline_debounce_v1` or later | maybe | no, until live-verified | UNKNOWN | use `check` then `apply --dry-run` before changing code |
 
 See [docs/verification.md](docs/verification.md) for the exact local verification sequence and [docs/releasing.md](docs/releasing.md) for release rules and asset expectations.

@@ -1,0 +1,1 @@
+,Z=tX.useCallback(()=>{if(J.current!==void 0)clearTimeout(J.current);J.current=setTimeout((V,y)=>{V.current=void 0,y()},301,J,L)},[L]);tX.useEffect(()=>{if($!==X.current.messageId||_!==X.current.permissionMode||q!==X.current.vimMode)X.current.permissionMode=_,X.current.vimMode=q,Z()},[$,_,q,Z]);
