@@ -70,8 +70,12 @@ claude-statusline-verify on 8
 
 Expected dry-run result:
 
+- the output begins with the current inspection fields for the target binary
 - `dry_run: ok`
 - `dry_run_rebuild_validation: passed`
+- `simulated_state: patched`
+- `simulated_interval_ms: 1000`
+- `would_apply_interval_ms: 1000`
 
 Expected patched result:
 

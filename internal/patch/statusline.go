@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var versionPattern = regexp.MustCompile(`VERSION:"([^"]+)"`)
@@ -140,7 +141,7 @@ func DetectVersion(payload []byte) string {
 	if len(match) != 2 {
 		return ""
 	}
-	return string(match[1])
+	return sanitizeFieldValue(string(match[1]))
 }
 
 func IsDocumentedLiveVerifiedVersion(version string) bool {
@@ -456,10 +457,18 @@ func newStatuslineDebounceV1() shapeFamily {
 func observedVersionsForShape(shapeID string) []string {
 	for _, family := range shapeFamilies {
 		if family.id == shapeID {
-			return family.observedVersions
+			return append([]string(nil), family.observedVersions...)
 		}
 	}
 	return nil
+}
+
+func sanitizeFieldValue(value string) string {
+	replacer := strings.NewReplacer(
+		"\r", `\r`,
+		"\n", `\n`,
+	)
+	return replacer.Replace(value)
 }
 
 func (m regexMatch) bytes(payload []byte, name string) []byte {

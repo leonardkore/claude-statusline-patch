@@ -8,8 +8,11 @@ import (
 	"os"
 
 	"github.com/leonardkore/claude-statusline-patch/internal/bun"
+	"github.com/leonardkore/claude-statusline-patch/internal/fileutil"
 	"github.com/leonardkore/claude-statusline-patch/internal/patch"
 )
+
+const maxBinarySizeBytes int64 = 1 << 30
 
 func main() {
 	binaryPath := flag.String("binary", "", "path to the Claude binary")
@@ -21,7 +24,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	data, err := os.ReadFile(*binaryPath)
+	data, err := fileutil.ReadBoundedRegularFile(*binaryPath, "target binary", maxBinarySizeBytes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "read binary: %v\n", err)
 		os.Exit(1)
@@ -55,7 +58,7 @@ func main() {
 	}
 
 	if *outputPath != "" {
-		if err := os.WriteFile(*outputPath, snippet, 0o644); err != nil {
+		if err := os.WriteFile(*outputPath, snippet, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "write output: %v\n", err)
 			os.Exit(1)
 		}

@@ -1,10 +1,18 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/leonardkore/claude-statusline-patch/internal/backup"
+	"github.com/leonardkore/claude-statusline-patch/internal/bun"
 	"github.com/leonardkore/claude-statusline-patch/internal/patch"
 )
 
@@ -34,6 +42,7 @@ func TestFormatCheckOutputIncludesKnownShapeAndSupportClaim(t *testing.T) {
 		"shape_state: known",
 		"patch_state: unpatched",
 		"support_claim: " + expectedClaim,
+		"verification_claim: " + legacyVerificationClaim(expectedClaim),
 		"quick_apply_candidate: true",
 		"managed: false",
 	} {
@@ -62,8 +71,32 @@ func TestFormatCheckOutputSuppressesKnownShapeFieldsForUnknownShape(t *testing.T
 	if !strings.Contains(out, "support_claim: undocumented") {
 		t.Fatalf("expected undocumented claim, got %q", out)
 	}
+	if !strings.Contains(out, "verification_claim: not-live-verified") {
+		t.Fatalf("expected legacy verification claim, got %q", out)
+	}
 	if !strings.Contains(out, "quick_apply_candidate: false") {
 		t.Fatalf("expected quick_apply_candidate false, got %q", out)
+	}
+}
+
+func TestFormatCheckOutputSanitizesVersionAndPath(t *testing.T) {
+	t.Parallel()
+
+	out := formatCheckOutput("/tmp/claude\nfake", patch.Inspection{
+		State:      patch.StateUnrecognizedShape,
+		ShapeState: patch.ShapeStateUnrecognized,
+		PatchState: patch.PatchStateUnknown,
+		Version:    "2.1.85\nquick_apply_candidate: true",
+	}, false)
+
+	if strings.Contains(out, "\nquick_apply_candidate: true\n") {
+		t.Fatalf("expected newline injection to be escaped, got %q", out)
+	}
+	if !strings.Contains(out, `binary: /tmp/claude\nfake`) {
+		t.Fatalf("expected sanitized binary path, got %q", out)
+	}
+	if !strings.Contains(out, `version: 2.1.85\nquick_apply_candidate: true`) {
+		t.Fatalf("expected sanitized version, got %q", out)
 	}
 }
 
@@ -77,17 +110,451 @@ func TestFormatDryRunOutputIncludesValidationMarkers(t *testing.T) {
 		Version:          "9.9.9",
 		ShapeID:          patch.ShapeIDStatuslineDebounceV1,
 		ObservedVersions: []string{"2.1.84", "2.1.85"},
-	}, false, 1000)
+	}, false, 1000, &patch.Inspection{
+		State:      patch.StatePatched,
+		PatchState: patch.PatchStatePatched,
+		ShapeState: patch.ShapeStateKnown,
+		ShapeID:    patch.ShapeIDStatuslineDebounceV1,
+		IntervalMS: 1000,
+	}, "ok", "passed", "")
 
 	for _, fragment := range []string{
 		"support_claim: patchable_only",
+		"verification_claim: not-live-verified",
 		"quick_apply_candidate: true",
+		"current_state: unpatched",
 		"dry_run: ok",
 		"dry_run_rebuild_validation: passed",
+		"simulated_state: patched",
+		"simulated_interval_ms: 1000",
 		"would_apply_interval_ms: 1000",
 	} {
 		if !strings.Contains(out, fragment) {
 			t.Fatalf("expected output to contain %q, got %q", fragment, out)
 		}
 	}
+}
+
+func TestManifestSupportClaimsMatchRuntimeLogic(t *testing.T) {
+	t.Parallel()
+
+	for _, fixture := range loadManifest(t).Fixtures {
+		fixture := fixture
+		t.Run(fixture.ID, func(t *testing.T) {
+			inspection := patch.Inspect(fixturePayload(t, fixture))
+			if got := supportClaim(inspection); got != fixture.SupportClaim {
+				t.Fatalf("expected support claim %s, got %s", fixture.SupportClaim, got)
+			}
+		})
+	}
+}
+
+func TestRunApplyDryRunOutputsValidationAndDoesNotWrite(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	binaryPath := writeTestBinary(t, tempDir, "unpatched-2.1.85", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+	original := mustReadFile(t, binaryPath)
+
+	exitCode, stdout, stderr := captureRunApply(t, "--binary", binaryPath, "--dry-run", "--interval-ms", "1000")
+	if exitCode != 0 {
+		t.Fatalf("expected dry-run success, got exit %d stderr=%q", exitCode, stderr)
+	}
+	for _, fragment := range []string{
+		"current_state: unpatched",
+		"dry_run: ok",
+		"dry_run_rebuild_validation: passed",
+		"simulated_state: patched",
+		"simulated_interval_ms: 1000",
+		"would_apply_interval_ms: 1000",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, original) {
+		t.Fatalf("expected dry-run to leave binary unchanged")
+	}
+
+	targetDir, err := backup.TargetDir(binaryPath)
+	if err != nil {
+		t.Fatalf("TargetDir failed: %v", err)
+	}
+	if _, err := os.Stat(targetDir); err == nil {
+		t.Fatalf("expected dry-run not to create backup state directory")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("expected target state dir to be absent, got %v", err)
+	}
+}
+
+func TestRunApplyDryRunAlreadyPatchedManagedSameIntervalReportsOk(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	originalBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(originalPayload))
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	patchedBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(patchedPayload))
+
+	binaryPath := filepath.Join(tempDir, "patched-managed")
+	if err := os.WriteFile(binaryPath, patchedBinary, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	originalHash := backup.SHA256Bytes(originalBinary)
+	patchedHash := backup.SHA256Bytes(patchedBinary)
+	backupPath, _, err := backup.EnsureBackup(binaryPath, originalHash, originalBinary)
+	if err != nil {
+		t.Fatalf("EnsureBackup failed: %v", err)
+	}
+	if err := backup.SaveMetadata(backup.Metadata{
+		CanonicalPath:   binaryPath,
+		DisplayPath:     binaryPath,
+		DetectedVersion: "2.1.85",
+		OriginalSHA256:  originalHash,
+		PatchedSHA256:   patchedHash,
+		IntervalMS:      1000,
+		BackupPath:      backupPath,
+		FileMode:        0o755,
+	}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+
+	exitCode, stdout, stderr := captureRunApply(t, "--binary", binaryPath, "--dry-run", "--interval-ms", "1000")
+	if exitCode != 0 {
+		t.Fatalf("expected dry-run success, got exit %d stderr=%q", exitCode, stderr)
+	}
+	for _, fragment := range []string{
+		"current_state: patched",
+		"current_interval_ms: 1000",
+		"dry_run: ok",
+		"dry_run_rebuild_validation: skipped_already_patched",
+		"dry_run_reason: already_patched_same_interval",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+func TestRunApplyDryRunAlreadyPatchedDifferentIntervalReportsBlocked(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	originalBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(originalPayload))
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	patchedBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(patchedPayload))
+
+	binaryPath := filepath.Join(tempDir, "patched-managed-different-interval")
+	if err := os.WriteFile(binaryPath, patchedBinary, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	originalHash := backup.SHA256Bytes(originalBinary)
+	patchedHash := backup.SHA256Bytes(patchedBinary)
+	backupPath, _, err := backup.EnsureBackup(binaryPath, originalHash, originalBinary)
+	if err != nil {
+		t.Fatalf("EnsureBackup failed: %v", err)
+	}
+	if err := backup.SaveMetadata(backup.Metadata{
+		CanonicalPath:   binaryPath,
+		DisplayPath:     binaryPath,
+		DetectedVersion: "2.1.85",
+		OriginalSHA256:  originalHash,
+		PatchedSHA256:   patchedHash,
+		IntervalMS:      1000,
+		BackupPath:      backupPath,
+		FileMode:        0o755,
+	}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+
+	exitCode, stdout, stderr := captureRunApply(t, "--binary", binaryPath, "--dry-run", "--interval-ms", "1500")
+	if exitCode != 1 {
+		t.Fatalf("expected dry-run blocked exit 1, got %d stderr=%q", exitCode, stderr)
+	}
+	for _, fragment := range []string{
+		"dry_run: blocked",
+		"dry_run_reason: restore_required_for_interval_change current_interval_ms=1000",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+func TestRunApplyDryRunUnrecognizedShapeReportsBlocked(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	binaryPath := writeTestBinary(t, tempDir, "unrecognized-2.1.85", fixturePayloadByID(t, "negative-2.1.85-unrecognized-delay"))
+	exitCode, stdout, stderr := captureRunApply(t, "--binary", binaryPath, "--dry-run", "--interval-ms", "1000")
+	if exitCode != 1 {
+		t.Fatalf("expected dry-run blocked exit 1, got %d stderr=%q", exitCode, stderr)
+	}
+	for _, fragment := range []string{
+		"current_state: unrecognized_shape",
+		"dry_run: blocked",
+		"dry_run_reason: unrecognized_shape",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+type fixtureManifest struct {
+	Fixtures []fixtureRecord `json:"fixtures"`
+}
+
+type fixtureRecord struct {
+	ID           string `json:"id"`
+	Path         string `json:"path"`
+	Version      string `json:"version"`
+	SupportClaim string `json:"support_claim"`
+}
+
+func loadManifest(t *testing.T) fixtureManifest {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "statusline-fixtures.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest fixtureManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	return manifest
+}
+
+func fixturePayloadByID(t *testing.T, id string) []byte {
+	t.Helper()
+	for _, fixture := range loadManifest(t).Fixtures {
+		if fixture.ID == id {
+			return fixturePayload(t, fixture)
+		}
+	}
+	t.Fatalf("fixture %s not found", id)
+	return nil
+}
+
+func fixturePayload(t *testing.T, fixture fixtureRecord) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", fixture.Path))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", fixture.Path, err)
+	}
+	if fixture.Version == "" {
+		return data
+	}
+	return append([]byte(`VERSION:"`+fixture.Version+`";`), data...)
+}
+
+func captureRunApply(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+	}()
+
+	exitCode := runApply(args)
+
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+
+	stdoutBytes, _ := io.ReadAll(stdoutR)
+	stderrBytes, _ := io.ReadAll(stderrR)
+	_ = stdoutR.Close()
+	_ = stderrR.Close()
+
+	return exitCode, string(stdoutBytes), string(stderrBytes)
+}
+
+func writeTestBinary(t *testing.T, dir, name string, entryContents []byte) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	image := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(entryContents))
+	if err := os.WriteFile(path, image, 0o755); err != nil {
+		t.Fatalf("write test binary: %v", err)
+	}
+	return path
+}
+
+func setTestStateRoot(t *testing.T) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir failed: %v", err)
+	}
+	stateRoot, err := os.MkdirTemp(home, ".claude-statusline-patch-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(stateRoot)
+	})
+	t.Setenv("XDG_STATE_HOME", stateRoot)
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file %s: %v", path, err)
+	}
+	return data
+}
+
+const (
+	testOverlayTrailer = "\n---- Bun! ----\n"
+	testOverlayOffsets = 32
+	testModuleSize     = 52
+)
+
+func buildSectionGraphPayload(contents []byte) []byte {
+	name := []byte("/$bunfs/root/src/entrypoints/cli.js")
+	origin := []byte("/$bunfs/root/src/entrypoints/cli.js")
+	graph := make([]byte, 0, len(name)+len(contents)+len(origin)+testModuleSize)
+
+	namePtr := bun.StringPointer{Offset: uint32(len(graph)), Length: uint32(len(name))}
+	graph = append(graph, name...)
+	contentsPtr := bun.StringPointer{Offset: uint32(len(graph)), Length: uint32(len(contents))}
+	graph = append(graph, contents...)
+	originPtr := bun.StringPointer{Offset: uint32(len(graph)), Length: uint32(len(origin))}
+	graph = append(graph, origin...)
+
+	modulesPtr := bun.StringPointer{Offset: uint32(len(graph)), Length: testModuleSize}
+	module := bun.Module{
+		Name:               namePtr,
+		Contents:           contentsPtr,
+		BytecodeOriginPath: originPtr,
+	}
+	graph = append(graph, encodeModules([]bun.Module{module})...)
+
+	offsetBytes := make([]byte, testOverlayOffsets)
+	binary.LittleEndian.PutUint64(offsetBytes[:8], uint64(len(graph)))
+	encodePointer(offsetBytes[8:16], modulesPtr)
+	binary.LittleEndian.PutUint32(offsetBytes[16:20], 0)
+	encodePointer(offsetBytes[20:28], bun.StringPointer{Offset: uint32(len(graph)), Length: 0})
+	binary.LittleEndian.PutUint32(offsetBytes[28:32], 0)
+
+	var out bytes.Buffer
+	out.Write(graph)
+	out.Write(offsetBytes)
+	out.WriteString(testOverlayTrailer)
+	return out.Bytes()
+}
+
+func encodeModules(modules []bun.Module) []byte {
+	out := make([]byte, len(modules)*testModuleSize)
+	for i, module := range modules {
+		encoded := out[i*testModuleSize : (i+1)*testModuleSize]
+		encodePointer(encoded[0:8], module.Name)
+		encodePointer(encoded[8:16], module.Contents)
+		encodePointer(encoded[16:24], module.Sourcemap)
+		encodePointer(encoded[24:32], module.Bytecode)
+		encodePointer(encoded[32:40], module.ModuleInfo)
+		encodePointer(encoded[40:48], module.BytecodeOriginPath)
+		encoded[48] = module.Encoding
+		encoded[49] = module.Loader
+		encoded[50] = module.ModuleFormat
+		encoded[51] = module.Side
+	}
+	return out
+}
+
+func encodePointer(dst []byte, pointer bun.StringPointer) {
+	binary.LittleEndian.PutUint32(dst[0:4], pointer.Offset)
+	binary.LittleEndian.PutUint32(dst[4:8], pointer.Length)
+}
+
+func buildMinimalELFWithBunSection(t *testing.T, payload []byte) []byte {
+	t.Helper()
+
+	const (
+		elfHeaderSize     = 64
+		sectionHeaderSize = 64
+		sectionCount      = 3
+	)
+
+	shstrtab := []byte{0, '.', 's', 'h', 's', 't', 'r', 't', 'a', 'b', 0, '.', 'b', 'u', 'n', 0}
+	bunData := make([]byte, 8+len(payload))
+	binary.LittleEndian.PutUint64(bunData[:8], uint64(len(payload)))
+	copy(bunData[8:], payload)
+
+	shstrtabOffset := elfHeaderSize
+	bunOffset := alignUp(shstrtabOffset+len(shstrtab), 8)
+	sectionHeadersOffset := alignUp(bunOffset+len(bunData), 8)
+	totalSize := sectionHeadersOffset + (sectionHeaderSize * sectionCount)
+
+	out := make([]byte, totalSize)
+	copy(out[:4], []byte{0x7f, 'E', 'L', 'F'})
+	out[4] = 2
+	out[5] = 1
+	out[6] = 1
+
+	binary.LittleEndian.PutUint16(out[16:], 2)
+	binary.LittleEndian.PutUint16(out[18:], 62)
+	binary.LittleEndian.PutUint32(out[20:], 1)
+	binary.LittleEndian.PutUint64(out[40:], uint64(sectionHeadersOffset))
+	binary.LittleEndian.PutUint16(out[52:], elfHeaderSize)
+	binary.LittleEndian.PutUint16(out[58:], sectionHeaderSize)
+	binary.LittleEndian.PutUint16(out[60:], sectionCount)
+	binary.LittleEndian.PutUint16(out[62:], 1)
+
+	copy(out[shstrtabOffset:], shstrtab)
+	copy(out[bunOffset:], bunData)
+
+	shoff := sectionHeadersOffset
+	writeSectionHeader(out[shoff+sectionHeaderSize:], 1, 3, 0, uint64(shstrtabOffset), uint64(len(shstrtab)), 1)
+	writeSectionHeader(out[shoff+(sectionHeaderSize*2):], 11, 1, 0, uint64(bunOffset), uint64(len(bunData)), 1)
+
+	return out
+}
+
+func writeSectionHeader(dst []byte, nameOffset uint32, sectionType uint32, flags uint64, offset uint64, size uint64, align uint64) {
+	binary.LittleEndian.PutUint32(dst[0:], nameOffset)
+	binary.LittleEndian.PutUint32(dst[4:], sectionType)
+	binary.LittleEndian.PutUint64(dst[8:], flags)
+	binary.LittleEndian.PutUint64(dst[24:], offset)
+	binary.LittleEndian.PutUint64(dst[32:], size)
+	binary.LittleEndian.PutUint64(dst[48:], align)
+}
+
+func alignUp(value int, align int) int {
+	if value%align == 0 {
+		return value
+	}
+	return value + (align - (value % align))
 }

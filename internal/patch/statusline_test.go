@@ -2,11 +2,12 @@ package patch
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 )
 
 type fixtureManifest struct {
@@ -42,8 +43,17 @@ func TestManifestFixturesInspectAsDeclared(t *testing.T) {
 				if fixture.SourceBinarySHA == "" {
 					t.Fatalf("expected authoritative fixture to record source binary sha")
 				}
+				if len(fixture.SourceBinarySHA) != 64 {
+					t.Fatalf("expected authoritative fixture source binary sha to be 64 hex chars, got %q", fixture.SourceBinarySHA)
+				}
+				if _, err := hex.DecodeString(fixture.SourceBinarySHA); err != nil {
+					t.Fatalf("expected authoritative fixture source binary sha to be valid hex: %v", err)
+				}
 				if fixture.ExtractedAt == "" {
 					t.Fatalf("expected authoritative fixture to record extraction date")
+				}
+				if _, err := time.Parse("2006-01-02", fixture.ExtractedAt); err != nil {
+					t.Fatalf("expected authoritative fixture extraction date to parse: %v", err)
 				}
 			}
 
@@ -75,14 +85,24 @@ func TestManifestFixturesInspectAsDeclared(t *testing.T) {
 func TestObservedVersionsMatchKnownAuthoritativeFixtures(t *testing.T) {
 	t.Parallel()
 
-	payload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
-	inspection := Inspect(payload)
-	if inspection.ShapeID != ShapeIDStatuslineDebounceV1 {
-		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV1, inspection.ShapeID)
+	manifest := loadManifest(t)
+	expectedByShape := map[string][]string{}
+	for _, fixture := range manifest.Fixtures {
+		if !fixture.Authoritative || fixture.ShapeID == "" {
+			continue
+		}
+		expectedByShape[fixture.ShapeID] = append(expectedByShape[fixture.ShapeID], fixture.Version)
 	}
-	expected := []string{"2.1.84", "2.1.85"}
-	if strings.Join(inspection.ObservedVersions, ",") != strings.Join(expected, ",") {
-		t.Fatalf("expected observed versions %v, got %v", expected, inspection.ObservedVersions)
+	for shapeID, expected := range expectedByShape {
+		got := ObservedVersions(shapeID)
+		if len(got) != len(expected) {
+			t.Fatalf("expected observed versions %v for %s, got %v", expected, shapeID, got)
+		}
+		for i := range expected {
+			if got[i] != expected[i] {
+				t.Fatalf("expected observed versions %v for %s, got %v", expected, shapeID, got)
+			}
+		}
 	}
 }
 
@@ -162,12 +182,54 @@ func TestExtractMatchedSnippetReturnsKnownSnippet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract matched snippet failed: %v", err)
 	}
-	expected := bytes.TrimSuffix(loadFixture(t, "claude-2.1.85-unpatched.js"), []byte("\n"))
+	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.85-unpatched.js"))
 	if inspection.ShapeID != ShapeIDStatuslineDebounceV1 {
 		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV1, inspection.ShapeID)
 	}
 	if !bytes.Equal(snippet, expected) {
 		t.Fatalf("expected extracted snippet to match fixture bytes")
+	}
+}
+
+func TestInspectNegativeFixturesExposeExpectedShapeState(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		id         string
+		state      State
+		shapeState ShapeState
+	}{
+		{id: "negative-2.1.85-duplicate-unpatched", state: StateAmbiguousShape, shapeState: ShapeStateAmbiguous},
+		{id: "negative-2.1.85-malformed-patched-interval", state: StateAmbiguousShape, shapeState: ShapeStateAmbiguous},
+		{id: "negative-2.1.85-unrecognized-delay", state: StateUnrecognizedShape, shapeState: ShapeStateUnrecognized},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.id, func(t *testing.T) {
+			inspection := Inspect(fixturePayloadByID(t, tc.id))
+			if inspection.State != tc.state {
+				t.Fatalf("expected state %s, got %s", tc.state, inspection.State)
+			}
+			if inspection.ShapeState != tc.shapeState {
+				t.Fatalf("expected shape state %s, got %s", tc.shapeState, inspection.ShapeState)
+			}
+		})
+	}
+}
+
+func TestInspectForeignContentIsUnrecognized(t *testing.T) {
+	t.Parallel()
+
+	inspection := Inspect([]byte(`VERSION:"2.1.85";console.log("foreign content");`))
+	if inspection.State != StateUnrecognizedShape {
+		t.Fatalf("expected unrecognized shape, got %s", inspection.State)
+	}
+	if inspection.ShapeState != ShapeStateUnrecognized {
+		t.Fatalf("expected unrecognized shape state, got %s", inspection.ShapeState)
+	}
+	if inspection.PatchState != PatchStateUnknown {
+		t.Fatalf("expected unknown patch state, got %s", inspection.PatchState)
 	}
 }
 
@@ -218,4 +280,8 @@ func loadFixture(t *testing.T, name string) []byte {
 
 func versionBytes(version string) []byte {
 	return []byte(`VERSION:"` + version + `";`)
+}
+
+func trimTrailingLineEndings(data []byte) []byte {
+	return bytes.TrimRight(data, "\r\n")
 }

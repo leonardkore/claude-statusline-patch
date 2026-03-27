@@ -89,6 +89,9 @@ By default the CLI resolves `~/.local/bin/claude`, follows symlinks to the canon
   - `live_verified`
   - `patchable_only`
   - `undocumented`
+- `verification_claim` as a legacy compatibility alias:
+  - `live-verified`
+  - `not-live-verified`
 - `quick_apply_candidate: true` when the binary is in a uniquely known unpatched shape
 
 ## Backup State

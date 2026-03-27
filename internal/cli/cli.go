@@ -12,6 +12,7 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/backup"
 	"github.com/leonardkore/claude-statusline-patch/internal/bun"
 	"github.com/leonardkore/claude-statusline-patch/internal/claude"
+	"github.com/leonardkore/claude-statusline-patch/internal/fileutil"
 	"github.com/leonardkore/claude-statusline-patch/internal/patch"
 	"github.com/leonardkore/claude-statusline-patch/internal/repack"
 	"github.com/leonardkore/claude-statusline-patch/internal/version"
@@ -76,6 +77,10 @@ func runApply(args []string) int {
 		return fail(err)
 	}
 
+	if *dryRun {
+		return runApplyDryRun(resolved.CanonicalPath, originalHash, originalBytes, bundle, graph, inspection, managed, *intervalMS)
+	}
+
 	switch inspection.State {
 	case patch.StatePatched:
 		if managed == nil || managed.PatchedSHA256 != originalHash {
@@ -96,36 +101,11 @@ func runApply(args []string) int {
 		return fail(fmt.Errorf("refusing to patch unknown state %q", inspection.State))
 	}
 
-	entryIndex, entryModule, err := graph.EntryPointModule()
+	patchedBytes, _, err := rebuildPatchedBinary(originalBytes, bundle, graph, inspection, *intervalMS)
 	if err != nil {
 		return fail(err)
-	}
-	entryContents, err := graph.Slice(entryModule.Contents)
-	if err != nil {
-		return fail(err)
-	}
-	patchedContents, err := patch.ApplyInspection(entryContents, inspection, *intervalMS)
-	if err != nil {
-		return fail(err)
-	}
-	patchedPayload, err := graph.ReplaceModuleContents(entryIndex, patchedContents)
-	if err != nil {
-		return fail(err)
-	}
-	patchedBytes, err := bun.ReplacePayload(originalBytes, bundle.Metadata, patchedPayload)
-	if err != nil {
-		return fail(fmt.Errorf("replace embedded payload: %w", err))
 	}
 	patchedHash := backup.SHA256Bytes(patchedBytes)
-
-	if _, _, postInspection, err := inspectBinary(patchedBytes); err != nil {
-		return fail(fmt.Errorf("re-validate rebuilt binary: %w", err))
-	} else if postInspection.State != patch.StatePatched || postInspection.IntervalMS != *intervalMS {
-		return fail(fmt.Errorf("re-validate rebuilt binary: expected patched %dms, got %s %dms", *intervalMS, postInspection.State, postInspection.IntervalMS))
-	} else if *dryRun {
-		fmt.Print(formatDryRunOutput(resolved.CanonicalPath, inspection, managed != nil, *intervalMS))
-		return 0
-	}
 
 	backupPath, backupCreated, err := backup.EnsureBackup(resolved.CanonicalPath, originalHash, originalBytes)
 	if err != nil {
@@ -209,8 +189,8 @@ func runCheck(args []string) int {
 
 func formatCheckOutput(binaryPath string, inspection patch.Inspection, managed bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "binary: %s\n", binaryPath)
-	fmt.Fprintf(&b, "version: %s\n", inspection.Version)
+	fmt.Fprintf(&b, "binary: %s\n", sanitizeOutputValue(binaryPath))
+	fmt.Fprintf(&b, "version: %s\n", sanitizeOutputValue(inspection.Version))
 	fmt.Fprintf(&b, "state: %s\n", inspection.State)
 	if inspection.ShapeState == patch.ShapeStateKnown {
 		fmt.Fprintf(&b, "shape_id: %s\n", inspection.ShapeID)
@@ -221,19 +201,59 @@ func formatCheckOutput(binaryPath string, inspection patch.Inspection, managed b
 	if inspection.State == patch.StatePatched {
 		fmt.Fprintf(&b, "interval_ms: %d\n", inspection.IntervalMS)
 	}
-	fmt.Fprintf(&b, "support_claim: %s\n", supportClaim(inspection))
+	support := supportClaim(inspection)
+	fmt.Fprintf(&b, "support_claim: %s\n", support)
+	fmt.Fprintf(&b, "verification_claim: %s\n", legacyVerificationClaim(support))
 	fmt.Fprintf(&b, "quick_apply_candidate: %t\n", quickApplyCandidate(inspection))
 	fmt.Fprintf(&b, "managed: %t\n", managed)
 	return b.String()
 }
 
-func formatDryRunOutput(binaryPath string, inspection patch.Inspection, managed bool, intervalMS int) string {
+func formatDryRunOutput(binaryPath string, current patch.Inspection, managed bool, intervalMS int, simulated *patch.Inspection, status, validation, reason string) string {
 	var b strings.Builder
-	b.WriteString(formatCheckOutput(binaryPath, inspection, managed))
-	fmt.Fprintf(&b, "dry_run: ok\n")
-	fmt.Fprintf(&b, "dry_run_rebuild_validation: passed\n")
+	fmt.Fprintf(&b, "binary: %s\n", sanitizeOutputValue(binaryPath))
+	fmt.Fprintf(&b, "version: %s\n", sanitizeOutputValue(current.Version))
+	fmt.Fprintf(&b, "current_state: %s\n", current.State)
+	if current.ShapeState == patch.ShapeStateKnown {
+		fmt.Fprintf(&b, "shape_id: %s\n", current.ShapeID)
+		fmt.Fprintf(&b, "observed_versions: %s\n", strings.Join(current.ObservedVersions, ", "))
+	}
+	fmt.Fprintf(&b, "current_shape_state: %s\n", current.ShapeState)
+	fmt.Fprintf(&b, "current_patch_state: %s\n", current.PatchState)
+	if current.State == patch.StatePatched {
+		fmt.Fprintf(&b, "current_interval_ms: %d\n", current.IntervalMS)
+	}
+	support := supportClaim(current)
+	fmt.Fprintf(&b, "support_claim: %s\n", support)
+	fmt.Fprintf(&b, "verification_claim: %s\n", legacyVerificationClaim(support))
+	fmt.Fprintf(&b, "quick_apply_candidate: %t\n", quickApplyCandidate(current))
+	fmt.Fprintf(&b, "managed: %t\n", managed)
+	fmt.Fprintf(&b, "dry_run: %s\n", status)
+	if validation != "" {
+		fmt.Fprintf(&b, "dry_run_rebuild_validation: %s\n", validation)
+	}
+	if reason != "" {
+		fmt.Fprintf(&b, "dry_run_reason: %s\n", sanitizeOutputValue(reason))
+	}
+	if simulated != nil {
+		fmt.Fprintf(&b, "simulated_state: %s\n", simulated.State)
+		fmt.Fprintf(&b, "simulated_patch_state: %s\n", simulated.PatchState)
+		if simulated.ShapeState == patch.ShapeStateKnown {
+			fmt.Fprintf(&b, "simulated_shape_id: %s\n", simulated.ShapeID)
+		}
+		if simulated.State == patch.StatePatched {
+			fmt.Fprintf(&b, "simulated_interval_ms: %d\n", simulated.IntervalMS)
+		}
+	}
 	fmt.Fprintf(&b, "would_apply_interval_ms: %d\n", intervalMS)
 	return b.String()
+}
+
+func legacyVerificationClaim(support string) string {
+	if support == "live_verified" {
+		return "live-verified"
+	}
+	return "not-live-verified"
 }
 
 func supportClaim(inspection patch.Inspection) string {
@@ -316,6 +336,72 @@ func runRestore(args []string) int {
 	return 0
 }
 
+func runApplyDryRun(canonicalPath, originalHash string, originalBytes []byte, bundle *bun.Bundle, graph *bun.ModuleGraph, inspection patch.Inspection, managed *backup.Metadata, intervalMS int) int {
+	managedMatch := managed != nil && managed.PatchedSHA256 == originalHash
+
+	switch inspection.State {
+	case patch.StatePatched:
+		if !managedMatch {
+			fmt.Print(formatDryRunOutput(canonicalPath, inspection, false, intervalMS, nil, "blocked", "", "already_patched_unmanaged"))
+			return 1
+		}
+		if inspection.IntervalMS == intervalMS {
+			fmt.Print(formatDryRunOutput(canonicalPath, inspection, true, intervalMS, &inspection, "ok", "skipped_already_patched", "already_patched_same_interval"))
+			return 0
+		}
+		fmt.Print(formatDryRunOutput(canonicalPath, inspection, true, intervalMS, nil, "blocked", "", fmt.Sprintf("restore_required_for_interval_change current_interval_ms=%d", inspection.IntervalMS)))
+		return 1
+	case patch.StateAmbiguousShape:
+		fmt.Print(formatDryRunOutput(canonicalPath, inspection, managed != nil, intervalMS, nil, "blocked", "", "ambiguous_shape"))
+		return 1
+	case patch.StateUnrecognizedShape:
+		fmt.Print(formatDryRunOutput(canonicalPath, inspection, managed != nil, intervalMS, nil, "blocked", "", "unrecognized_shape"))
+		return 1
+	case patch.StateUnpatched:
+		patchedBytes, postInspection, err := rebuildPatchedBinary(originalBytes, bundle, graph, inspection, intervalMS)
+		if err != nil {
+			return fail(err)
+		}
+		_ = patchedBytes
+		fmt.Print(formatDryRunOutput(canonicalPath, inspection, managed != nil, intervalMS, &postInspection, "ok", "passed", ""))
+		return 0
+	default:
+		fmt.Print(formatDryRunOutput(canonicalPath, inspection, managed != nil, intervalMS, nil, "blocked", "", fmt.Sprintf("unknown_state %s", inspection.State)))
+		return 1
+	}
+}
+
+func rebuildPatchedBinary(originalBytes []byte, bundle *bun.Bundle, graph *bun.ModuleGraph, inspection patch.Inspection, intervalMS int) ([]byte, patch.Inspection, error) {
+	entryIndex, entryModule, err := graph.EntryPointModule()
+	if err != nil {
+		return nil, patch.Inspection{}, err
+	}
+	entryContents, err := graph.Slice(entryModule.Contents)
+	if err != nil {
+		return nil, patch.Inspection{}, err
+	}
+	patchedContents, err := patch.ApplyInspection(entryContents, inspection, intervalMS)
+	if err != nil {
+		return nil, patch.Inspection{}, err
+	}
+	patchedPayload, err := graph.ReplaceModuleContents(entryIndex, patchedContents)
+	if err != nil {
+		return nil, patch.Inspection{}, err
+	}
+	patchedBytes, err := bun.ReplacePayload(originalBytes, bundle.Metadata, patchedPayload)
+	if err != nil {
+		return nil, patch.Inspection{}, fmt.Errorf("replace embedded payload: %w", err)
+	}
+	_, _, postInspection, err := inspectBinary(patchedBytes)
+	if err != nil {
+		return nil, patch.Inspection{}, fmt.Errorf("re-validate rebuilt binary: %w", err)
+	}
+	if postInspection.State != patch.StatePatched || postInspection.IntervalMS != intervalMS {
+		return nil, patch.Inspection{}, fmt.Errorf("re-validate rebuilt binary: expected patched %dms, got %s %dms", intervalMS, postInspection.State, postInspection.IntervalMS)
+	}
+	return patchedBytes, postInspection, nil
+}
+
 func inspectBinary(data []byte) (*bun.Bundle, *bun.ModuleGraph, patch.Inspection, error) {
 	bundle, err := bun.Extract(data)
 	if err != nil {
@@ -347,23 +433,16 @@ func failCheck(err error) int {
 }
 
 func readBoundedFile(path string, maxSize int64) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("target is not a regular file: %s", path)
-	}
-	if info.Size() < 0 || info.Size() > maxSize {
-		return nil, fmt.Errorf("refusing to read %s: size %d exceeds limit %d", path, info.Size(), maxSize)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read target binary: %w", err)
-	}
-	return data, nil
+	return fileutil.ReadBoundedRegularFile(path, "target binary", maxSize)
 }
 
 func printUsage(w *os.File) {
 	fmt.Fprintf(w, "usage: %s {apply|check|restore|version} [flags]\n", filepath.Base(os.Args[0]))
+}
+
+func sanitizeOutputValue(value string) string {
+	return strings.NewReplacer(
+		"\r", `\r`,
+		"\n", `\n`,
+	).Replace(value)
 }

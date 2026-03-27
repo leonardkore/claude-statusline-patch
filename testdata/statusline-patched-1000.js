@@ -1,1 +1,0 @@
-,unused1=dY.useEffect(()=>{const id=setInterval(()=>J(),1000);return()=>clearInterval(id);},[J]),G=dY.useCallback(()=>{},[]);dY.useEffect(()=>{if($!==Y.current.messageId||D!==Y.current.permissionMode||A!==Y.current.vimMode)Y.current.permissionMode=D,Y.current.vimMode=A,G()},[$,D,A,G]);
