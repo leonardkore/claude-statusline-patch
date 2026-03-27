@@ -46,8 +46,15 @@ Commands:
 ```bash
 git checkout main
 git pull --ff-only
-git tag -a v0.1.2 -m "v0.1.2"
-git push origin v0.1.2
+git tag -a <next-release-tag-vX.Y.Z> -m "<next-release-tag-vX.Y.Z>"
+git push origin <next-release-tag-vX.Y.Z>
+```
+
+Example:
+
+```bash
+git tag -a v0.1.3 -m "v0.1.3"
+git push origin v0.1.3
 ```
 
 Do not tag from the feature branch.
@@ -58,7 +65,7 @@ Do not create a release before merge.
 Release title:
 
 ```text
-v0.1.2
+<next-release-tag-vX.Y.Z>
 ```
 
 Release notes must include:
@@ -70,7 +77,7 @@ Release notes must include:
 - install instructions:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@v0.1.2
+go install github.com/leonardkore/claude-statusline-patch@<next-release-tag-vX.Y.Z>
 ```
 
 - warning that only Linux + Claude `2.1.84`, `2.1.85` are live-verified unless more testing was actually done

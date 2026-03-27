@@ -21,10 +21,16 @@ Other OS binaries may be built for release distribution, but they are not claime
 
 ## Install
 
-Tagged-release install path:
+Latest tagged release:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@v0.1.2
+go install github.com/leonardkore/claude-statusline-patch@latest
+```
+
+If you need an exact pinned release, use:
+
+```bash
+go install github.com/leonardkore/claude-statusline-patch@vX.Y.Z
 ```
 
 ## Usage
