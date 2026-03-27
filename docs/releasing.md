@@ -15,6 +15,8 @@ Before opening a PR:
 - `gofmt -l .`
 - `go vet ./...`
 - live verification captured for:
+  - `check`
+  - `apply --dry-run --interval-ms 1000`
   - baseline `off`
   - `apply --interval-ms 1000`
   - idempotent re-apply

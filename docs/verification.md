@@ -20,8 +20,29 @@ Phase 1 does **not** include:
 Every new Claude version starts as a quick-apply candidate:
 
 - run `check` on the real binary before editing code
+- run `apply --dry-run` before any write if `check` reports a known shape
 - if extraction succeeds and one known `shape_id` is reported, treat it as a matcher-layer update, not a container-layer break
 - do not widen README or release claims until the full live verification sequence passes
+
+## New Version Update Playbook
+
+Run these steps in order for every newly seen Claude version:
+
+1. `claude-statusline-patch check --binary <path-to-new-version>`
+2. If container parsing fails, investigate the binary/container layer before touching matcher code.
+3. If the container parses but the shape is unrecognized, extract a real snippet first and compare it to the existing family corpus:
+
+   ```bash
+   go run ./tools/extract-statusline-fixture --binary <path-to-new-version> > /tmp/statusline-snippet.js
+   ```
+
+4. Add or update fixture entries and the provenance manifest before changing matcher logic.
+5. Run `claude-statusline-patch apply --dry-run --binary <path-to-new-version> --interval-ms 1000`
+6. If the dry run succeeds, run `apply`
+7. Live verify `on`
+8. Run `restore`
+9. Live verify `off`
+10. Update the compatibility table and release notes only after the live sequence succeeds
 
 When verifying the active default install:
 
@@ -42,9 +63,19 @@ Expected baseline result:
 Apply the tool:
 
 ```bash
+go run ./cmd/claude-statusline-patch apply --dry-run --interval-ms 1000
 go run ./cmd/claude-statusline-patch apply --interval-ms 1000
 claude-statusline-verify on 8
 ```
+
+Expected dry-run result:
+
+- the output begins with the current inspection fields for the target binary
+- `dry_run: ok`
+- `dry_run_rebuild_validation: passed`
+- `simulated_state: patched`
+- `simulated_interval_ms: 1000`
+- `would_apply_interval_ms: 1000`
 
 Expected patched result:
 

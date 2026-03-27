@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var versionPattern = regexp.MustCompile(`VERSION:"([^"]+)"`)
@@ -44,6 +45,7 @@ type Inspection struct {
 	PatchState       PatchState
 	Version          string
 	ShapeID          string
+	ObservedVersions []string
 	IntervalMS       int
 	UnpatchedMatches int
 	PatchedMatches   int
@@ -58,9 +60,10 @@ type compiledPattern struct {
 }
 
 type shapeFamily struct {
-	id        string
-	unpatched compiledPattern
-	patched   compiledPattern
+	id               string
+	observedVersions []string
+	unpatched        compiledPattern
+	patched          compiledPattern
 }
 
 type regexMatch struct {
@@ -112,6 +115,7 @@ func Inspect(payload []byte) Inspection {
 	default:
 		inspection.ShapeState = ShapeStateKnown
 		inspection.ShapeID = scan.first.shapeID
+		inspection.ObservedVersions = append(inspection.ObservedVersions, observedVersionsForShape(scan.first.shapeID)...)
 		inspection.PatchState = scan.first.kind
 		inspection.selected = scan.first
 		inspection.hasSelected = true
@@ -137,12 +141,16 @@ func DetectVersion(payload []byte) string {
 	if len(match) != 2 {
 		return ""
 	}
-	return string(match[1])
+	return sanitizeFieldValue(string(match[1]))
 }
 
 func IsDocumentedLiveVerifiedVersion(version string) bool {
 	_, ok := documentedLiveVerified[version]
 	return ok
+}
+
+func ObservedVersions(shapeID string) []string {
+	return append([]string(nil), observedVersionsForShape(shapeID)...)
 }
 
 func Apply(payload []byte, intervalMS int) ([]byte, error) {
@@ -187,6 +195,15 @@ func ApplyInspection(payload []byte, inspection Inspection, intervalMS int) ([]b
 		return nil, fmt.Errorf("post-patch validation failed: state=%s shape=%s interval=%d", post.State, post.ShapeID, post.IntervalMS)
 	}
 	return out, nil
+}
+
+func ExtractMatchedSnippet(payload []byte) ([]byte, Inspection, error) {
+	inspection := Inspect(payload)
+	if !inspection.hasSelected {
+		return nil, inspection, fmt.Errorf("payload is not in a uniquely known shape")
+	}
+	match := inspection.selected
+	return append([]byte(nil), payload[match.start:match.end]...), inspection, nil
 }
 
 func scanShapes(payload []byte) scanResult {
@@ -430,10 +447,28 @@ func newStatuslineDebounceV1() shapeFamily {
 		id,
 	)
 	return shapeFamily{
-		id:        ShapeIDStatuslineDebounceV1,
-		unpatched: compilePattern(unpatchedPattern),
-		patched:   compilePattern(patchedPattern),
+		id:               ShapeIDStatuslineDebounceV1,
+		observedVersions: []string{"2.1.84", "2.1.85"},
+		unpatched:        compilePattern(unpatchedPattern),
+		patched:          compilePattern(patchedPattern),
 	}
+}
+
+func observedVersionsForShape(shapeID string) []string {
+	for _, family := range shapeFamilies {
+		if family.id == shapeID {
+			return append([]string(nil), family.observedVersions...)
+		}
+	}
+	return nil
+}
+
+func sanitizeFieldValue(value string) string {
+	replacer := strings.NewReplacer(
+		"\r", `\r`,
+		"\n", `\n`,
+	)
+	return replacer.Replace(value)
 }
 
 func (m regexMatch) bytes(payload []byte, name string) []byte {
