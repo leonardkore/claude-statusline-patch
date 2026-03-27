@@ -7,64 +7,126 @@ import (
 	"strconv"
 )
 
-const SupportedVersion = "2.1.84"
+var versionPattern = regexp.MustCompile(`VERSION:"([^"]+)"`)
 
-var (
-	versionPattern = regexp.MustCompile(`VERSION:"([^"]+)"`)
-	unpatchedBytes = []byte(`,G=dY.useCallback(()=>{if(j.current!==void 0)clearTimeout(j.current);j.current=setTimeout((k,N)=>{k.current=void 0,N()},300,j,J)},[J]);dY.useEffect(()=>{if($!==Y.current.messageId||D!==Y.current.permissionMode||A!==Y.current.vimMode)Y.current.permissionMode=D,Y.current.vimMode=A,G()},[$,D,A,G]);`)
-	patchedPrefix  = []byte(`,unused1=dY.useEffect(()=>{const id=setInterval(()=>J(),`)
-	patchedSuffix  = []byte(`);return()=>clearInterval(id);},[J]),G=dY.useCallback(()=>{},[]);dY.useEffect(()=>{if($!==Y.current.messageId||D!==Y.current.permissionMode||A!==Y.current.vimMode)Y.current.permissionMode=D,Y.current.vimMode=A,G()},[$,D,A,G]);`)
+const (
+	ShapeIDStatuslineDebounceV1 = "statusline_debounce_v1"
 )
 
 type State string
 
 const (
-	StateUnpatched   State = "unpatched"
-	StatePatched     State = "patched"
-	StateUnsupported State = "unsupported"
-	StateAmbiguous   State = "ambiguous"
+	StateUnpatched         State = "unpatched"
+	StatePatched           State = "patched"
+	StateUnrecognizedShape State = "unrecognized_shape"
+	StateAmbiguousShape    State = "ambiguous_shape"
+)
+
+type ShapeState string
+
+const (
+	ShapeStateKnown        ShapeState = "known"
+	ShapeStateUnrecognized ShapeState = "unrecognized"
+	ShapeStateAmbiguous    ShapeState = "ambiguous"
+)
+
+type PatchState string
+
+const (
+	PatchStateUnpatched PatchState = "unpatched"
+	PatchStatePatched   PatchState = "patched"
+	PatchStateUnknown   PatchState = "unknown"
 )
 
 type Inspection struct {
 	State            State
+	ShapeState       ShapeState
+	PatchState       PatchState
 	Version          string
+	ShapeID          string
 	IntervalMS       int
 	UnpatchedMatches int
 	PatchedMatches   int
+
+	selected    shapeMatch
+	hasSelected bool
 }
+
+type compiledPattern struct {
+	re         *regexp.Regexp
+	groupIndex map[string]int
+}
+
+type shapeFamily struct {
+	id        string
+	unpatched compiledPattern
+	patched   compiledPattern
+}
+
+type regexMatch struct {
+	pattern compiledPattern
+	idxs    []int
+}
+
+type shapeMatch struct {
+	kind     PatchState
+	shapeID  string
+	start    int
+	end      int
+	match    regexMatch
+	interval int
+}
+
+type scanResult struct {
+	valid            int
+	unpatchedMatches int
+	patchedMatches   int
+	malformed        bool
+	first            shapeMatch
+}
+
+var (
+	identifierPattern      = `[A-Za-z_$][A-Za-z0-9_$]*`
+	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1()}
+	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}}
+)
 
 func Inspect(payload []byte) Inspection {
 	version := DetectVersion(payload)
-	unpatchedMatches := bytes.Count(payload, unpatchedBytes)
-	patchedIntervals, malformedPatchedMatch := findPatchedIntervals(payload)
+	scan := scanShapes(payload)
 
 	inspection := Inspection{
 		Version:          version,
-		UnpatchedMatches: unpatchedMatches,
-		PatchedMatches:   len(patchedIntervals),
-	}
-
-	if malformedPatchedMatch || unpatchedMatches > 1 || len(patchedIntervals) > 1 || (unpatchedMatches == 1 && len(patchedIntervals) == 1) {
-		inspection.State = StateAmbiguous
-		return inspection
-	}
-
-	if version != SupportedVersion {
-		inspection.State = StateUnsupported
-		if len(patchedIntervals) == 1 {
-			inspection.IntervalMS = patchedIntervals[0]
-		}
-		return inspection
+		UnpatchedMatches: scan.unpatchedMatches,
+		PatchedMatches:   scan.patchedMatches,
+		PatchState:       PatchStateUnknown,
 	}
 
 	switch {
-	case unpatchedMatches == 1:
-		inspection.State = StateUnpatched
-	case len(patchedIntervals) == 1:
-		inspection.State = StatePatched
-		inspection.IntervalMS = patchedIntervals[0]
+	case scan.malformed || scan.valid > 1:
+		inspection.State = StateAmbiguousShape
+		inspection.ShapeState = ShapeStateAmbiguous
+	case scan.valid == 0:
+		inspection.State = StateUnrecognizedShape
+		inspection.ShapeState = ShapeStateUnrecognized
 	default:
-		inspection.State = StateAmbiguous
+		inspection.ShapeState = ShapeStateKnown
+		inspection.ShapeID = scan.first.shapeID
+		inspection.PatchState = scan.first.kind
+		inspection.selected = scan.first
+		inspection.hasSelected = true
+		switch scan.first.kind {
+		case PatchStateUnpatched:
+			inspection.State = StateUnpatched
+		case PatchStatePatched:
+			inspection.State = StatePatched
+			inspection.IntervalMS = scan.first.interval
+		default:
+			inspection.State = StateUnrecognizedShape
+			inspection.ShapeState = ShapeStateUnrecognized
+			inspection.PatchState = PatchStateUnknown
+			inspection.hasSelected = false
+		}
 	}
 
 	return inspection
@@ -78,92 +140,315 @@ func DetectVersion(payload []byte) string {
 	return string(match[1])
 }
 
+func IsDocumentedLiveVerifiedVersion(version string) bool {
+	_, ok := documentedLiveVerified[version]
+	return ok
+}
+
 func Apply(payload []byte, intervalMS int) ([]byte, error) {
 	inspection := Inspect(payload)
 	switch inspection.State {
 	case StateUnpatched:
-		return ApplyKnownUnpatched(payload, intervalMS)
+		return ApplyInspection(payload, inspection, intervalMS)
 	case StatePatched:
 		return nil, fmt.Errorf("payload already patched at %dms", inspection.IntervalMS)
-	case StateAmbiguous:
+	case StateAmbiguousShape:
 		return nil, fmt.Errorf("patch match is ambiguous")
 	default:
-		return nil, fmt.Errorf("payload is unsupported for patching")
+		return nil, fmt.Errorf("payload shape is unrecognized for patching")
 	}
 }
 
 func ApplyKnownUnpatched(payload []byte, intervalMS int) ([]byte, error) {
-	if DetectVersion(payload) != SupportedVersion {
-		return nil, fmt.Errorf("payload is unsupported for patching")
+	return ApplyInspection(payload, Inspect(payload), intervalMS)
+}
+
+func ApplyInspection(payload []byte, inspection Inspection, intervalMS int) ([]byte, error) {
+	if intervalMS <= 0 {
+		return nil, fmt.Errorf("interval must be positive")
+	}
+	if inspection.State != StateUnpatched || !inspection.hasSelected {
+		return nil, fmt.Errorf("payload is not in a uniquely known unpatched shape")
 	}
 
-	replacement, err := buildPatchedBytes(intervalMS)
+	match := inspection.selected
+	replacement, err := buildPatchedBytes(payload, match, intervalMS)
 	if err != nil {
 		return nil, err
 	}
 
-	index := bytes.Index(payload, unpatchedBytes)
-	if index < 0 {
-		return nil, fmt.Errorf("unpatched signature not found")
-	}
-	out := make([]byte, len(payload)+len(replacement)-len(unpatchedBytes))
-	copy(out, payload[:index])
-	copy(out[index:], replacement)
-	copy(out[index+len(replacement):], payload[index+len(unpatchedBytes):])
+	out := make([]byte, len(payload)+len(replacement)-(match.end-match.start))
+	copy(out, payload[:match.start])
+	copy(out[match.start:], replacement)
+	copy(out[match.start+len(replacement):], payload[match.end:])
 
 	post := Inspect(out)
-	if post.State != StatePatched || post.IntervalMS != intervalMS {
-		return nil, fmt.Errorf("post-patch validation failed: state=%s interval=%d", post.State, post.IntervalMS)
+	if post.State != StatePatched || post.ShapeID != match.shapeID || post.IntervalMS != intervalMS {
+		return nil, fmt.Errorf("post-patch validation failed: state=%s shape=%s interval=%d", post.State, post.ShapeID, post.IntervalMS)
 	}
 	return out, nil
 }
 
-func buildPatchedBytes(intervalMS int) ([]byte, error) {
+func scanShapes(payload []byte) scanResult {
+	var result scanResult
+	for _, family := range shapeFamilies {
+		if scanPattern(payload, family.id, PatchStateUnpatched, family.unpatched, &result) {
+			return result
+		}
+		if scanPattern(payload, family.id, PatchStatePatched, family.patched, &result) {
+			return result
+		}
+	}
+	return result
+}
+
+func scanPattern(payload []byte, shapeID string, kind PatchState, pattern compiledPattern, result *scanResult) bool {
+	searchStart := 0
+	for searchStart < len(payload) {
+		loc := pattern.re.FindSubmatchIndex(payload[searchStart:])
+		if loc == nil {
+			return false
+		}
+
+		match := regexMatch{
+			pattern: pattern,
+			idxs:    offsetIndices(loc, searchStart),
+		}
+		candidate, malformed := validateCandidate(payload, shapeID, kind, match)
+		if malformed {
+			result.malformed = true
+			return true
+		}
+		if candidate != nil {
+			switch kind {
+			case PatchStateUnpatched:
+				result.unpatchedMatches++
+			case PatchStatePatched:
+				result.patchedMatches++
+			}
+			result.valid++
+			if result.valid == 1 {
+				result.first = *candidate
+			} else {
+				return true
+			}
+		}
+		searchStart = match.idxs[0] + 1
+	}
+	return false
+}
+
+func offsetIndices(indices []int, offset int) []int {
+	out := make([]int, len(indices))
+	for i, index := range indices {
+		if index < 0 {
+			out[i] = -1
+			continue
+		}
+		out[i] = index + offset
+	}
+	return out
+}
+
+func validateCandidate(payload []byte, shapeID string, kind PatchState, match regexMatch) (*shapeMatch, bool) {
+	switch kind {
+	case PatchStateUnpatched:
+		if !validateUnpatchedMatch(payload, match) {
+			return nil, true
+		}
+		return &shapeMatch{
+			kind:    kind,
+			shapeID: shapeID,
+			start:   match.idxs[0],
+			end:     match.idxs[1],
+			match:   match,
+		}, false
+	case PatchStatePatched:
+		if !validatePatchedMatch(payload, match) {
+			return nil, true
+		}
+		interval, ok := parsePositiveIntBytes(match.bytes(payload, "interval"))
+		if !ok {
+			return nil, true
+		}
+		return &shapeMatch{
+			kind:     kind,
+			shapeID:  shapeID,
+			start:    match.idxs[0],
+			end:      match.idxs[1],
+			match:    match,
+			interval: interval,
+		}, false
+	default:
+		return nil, false
+	}
+}
+
+func validateUnpatchedMatch(payload []byte, match regexMatch) bool {
+	return equalAllBytes(payload, match, "hooks", "hooksEffect") &&
+		equalAllBytes(payload, match, "timer", "timerClear", "timerSet", "timerArg") &&
+		equalAllBytes(payload, match, "clearArg", "clearArgRepeat") &&
+		equalAllBytes(payload, match, "invoke", "invokeRepeat") &&
+		equalAllBytes(payload, match, "refresh", "refreshDep") &&
+		equalAllBytes(payload, match, "callback", "callbackInvoke", "callbackDep") &&
+		equalAllBytes(payload, match, "state", "statePerm", "stateVim", "statePermAssign", "stateVimAssign") &&
+		equalAllBytes(payload, match, "message", "messageDep") &&
+		equalAllBytes(payload, match, "permission", "permissionAssign", "permissionDep") &&
+		equalAllBytes(payload, match, "vim", "vimAssign", "vimDep")
+}
+
+func validatePatchedMatch(payload []byte, match regexMatch) bool {
+	return equalAllBytes(payload, match, "hooks", "hooksCallback", "hooksEffect") &&
+		equalAllBytes(payload, match, "intervalVar", "intervalVarClear") &&
+		equalAllBytes(payload, match, "refresh", "refreshDep") &&
+		equalAllBytes(payload, match, "callback", "callbackInvoke", "callbackDep") &&
+		equalAllBytes(payload, match, "state", "statePerm", "stateVim", "statePermAssign", "stateVimAssign") &&
+		equalAllBytes(payload, match, "message", "messageDep") &&
+		equalAllBytes(payload, match, "permission", "permissionAssign", "permissionDep") &&
+		equalAllBytes(payload, match, "vim", "vimAssign", "vimDep")
+}
+
+func equalAllBytes(payload []byte, match regexMatch, names ...string) bool {
+	if len(names) == 0 {
+		return true
+	}
+	first := match.bytes(payload, names[0])
+	if len(first) == 0 {
+		return false
+	}
+	for _, name := range names[1:] {
+		if !bytes.Equal(first, match.bytes(payload, name)) {
+			return false
+		}
+	}
+	return true
+}
+
+func parsePositiveIntBytes(data []byte) (int, bool) {
+	if len(data) == 0 {
+		return 0, false
+	}
+	maxInt := int(^uint(0) >> 1)
+	value := 0
+	for _, digit := range data {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+		if value > (maxInt-int(digit-'0'))/10 {
+			return 0, false
+		}
+		value = value*10 + int(digit-'0')
+		if value <= 0 {
+			return 0, false
+		}
+	}
+	return value, true
+}
+
+func buildPatchedBytes(payload []byte, match shapeMatch, intervalMS int) ([]byte, error) {
 	if intervalMS <= 0 {
 		return nil, fmt.Errorf("interval must be positive")
 	}
 
-	base := append([]byte(nil), patchedPrefix...)
-	base = append(base, []byte(strconv.Itoa(intervalMS))...)
-	base = append(base, patchedSuffix...)
-	return base, nil
+	hooks := match.match.string(payload, "hooks")
+	refresh := match.match.string(payload, "refresh")
+	callback := match.match.string(payload, "callback")
+	message := match.match.string(payload, "message")
+	state := match.match.string(payload, "state")
+	permission := match.match.string(payload, "permission")
+	vim := match.match.string(payload, "vim")
+
+	base := bytes.NewBuffer(nil)
+	base.WriteByte(',')
+	base.WriteString("unused1=")
+	base.WriteString(hooks)
+	base.WriteString(".useEffect(()=>{const id=setInterval(()=>")
+	base.WriteString(refresh)
+	base.WriteString("(),")
+	base.WriteString(strconv.Itoa(intervalMS))
+	base.WriteString(");return()=>clearInterval(id);},[")
+	base.WriteString(refresh)
+	base.WriteString("]),")
+	base.WriteString(callback)
+	base.WriteString("=")
+	base.WriteString(hooks)
+	base.WriteString(".useCallback(()=>{},[]);")
+	base.WriteString(hooks)
+	base.WriteString(".useEffect(()=>{if(")
+	base.WriteString(message)
+	base.WriteString("!==")
+	base.WriteString(state)
+	base.WriteString(".current.messageId||")
+	base.WriteString(permission)
+	base.WriteString("!==")
+	base.WriteString(state)
+	base.WriteString(".current.permissionMode||")
+	base.WriteString(vim)
+	base.WriteString("!==")
+	base.WriteString(state)
+	base.WriteString(".current.vimMode)")
+	base.WriteString(state)
+	base.WriteString(".current.permissionMode=")
+	base.WriteString(permission)
+	base.WriteString(",")
+	base.WriteString(state)
+	base.WriteString(".current.vimMode=")
+	base.WriteString(vim)
+	base.WriteString(",")
+	base.WriteString(callback)
+	base.WriteString("()},[")
+	base.WriteString(message)
+	base.WriteString(",")
+	base.WriteString(permission)
+	base.WriteString(",")
+	base.WriteString(vim)
+	base.WriteString(",")
+	base.WriteString(callback)
+	base.WriteString("]);")
+	return base.Bytes(), nil
 }
 
-func findPatchedIntervals(payload []byte) ([]int, bool) {
-	var intervals []int
-	searchStart := 0
-	maxInt := int(^uint(0) >> 1)
-	for {
-		offset := bytes.Index(payload[searchStart:], patchedPrefix)
-		if offset < 0 {
-			return intervals, false
+func compilePattern(expr string) compiledPattern {
+	re := regexp.MustCompile(expr)
+	groupIndex := make(map[string]int)
+	for i, name := range re.SubexpNames() {
+		if name != "" {
+			groupIndex[name] = i
 		}
-		offset += searchStart
-
-		numberStart := offset + len(patchedPrefix)
-		numberEnd := numberStart
-		for numberEnd < len(payload) && payload[numberEnd] >= '0' && payload[numberEnd] <= '9' {
-			numberEnd++
-		}
-		if numberEnd == numberStart {
-			searchStart = offset + 1
-			continue
-		}
-		if !bytes.HasPrefix(payload[numberEnd:], patchedSuffix) {
-			searchStart = offset + 1
-			continue
-		}
-		interval := 0
-		for _, digit := range payload[numberStart:numberEnd] {
-			if interval > (maxInt-int(digit-'0'))/10 {
-				return intervals, true
-			}
-			interval = interval*10 + int(digit-'0')
-			if interval <= 0 {
-				return intervals, true
-			}
-		}
-		intervals = append(intervals, interval)
-		searchStart = numberEnd + len(patchedSuffix)
 	}
+	return compiledPattern{re: re, groupIndex: groupIndex}
+}
+
+func newStatuslineDebounceV1() shapeFamily {
+	id := identifierPattern
+	unpatchedPattern := fmt.Sprintf(
+		`,(?P<callback>%[1]s)=(?P<hooks>%[1]s)\.useCallback\(\(\)=>\{if\((?P<timer>%[1]s)\.current!==void 0\)clearTimeout\((?P<timerClear>%[1]s)\.current\);(?P<timerSet>%[1]s)\.current=setTimeout\(\((?P<clearArg>%[1]s),(?P<invoke>%[1]s)\)=>\{(?P<clearArgRepeat>%[1]s)\.current=void 0,(?P<invokeRepeat>%[1]s)\(\)\},300,(?P<timerArg>%[1]s),(?P<refresh>%[1]s)\)\},\[(?P<refreshDep>%[1]s)\]\);(?P<hooksEffect>%[1]s)\.useEffect\(\(\)=>\{if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|(?P<permission>%[1]s)!==(?P<statePerm>%[1]s)\.current\.permissionMode\|\|(?P<vim>%[1]s)!==(?P<stateVim>%[1]s)\.current\.vimMode\)(?P<statePermAssign>%[1]s)\.current\.permissionMode=(?P<permissionAssign>%[1]s),(?P<stateVimAssign>%[1]s)\.current\.vimMode=(?P<vimAssign>%[1]s),(?P<callbackInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<callbackDep>%[1]s)\]\);`,
+		id,
+	)
+	patchedPattern := fmt.Sprintf(
+		`,(?P<effectVar>%[1]s)=(?P<hooks>%[1]s)\.useEffect\(\(\)=>\{const (?P<intervalVar>%[1]s)=setInterval\(\(\)=>(?P<refresh>%[1]s)\(\),(?P<interval>[1-9][0-9]*)\);return\(\)=>clearInterval\((?P<intervalVarClear>%[1]s)\);\},\[(?P<refreshDep>%[1]s)\]\),(?P<callback>%[1]s)=(?P<hooksCallback>%[1]s)\.useCallback\(\(\)=>\{\},\[\]\);(?P<hooksEffect>%[1]s)\.useEffect\(\(\)=>\{if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|(?P<permission>%[1]s)!==(?P<statePerm>%[1]s)\.current\.permissionMode\|\|(?P<vim>%[1]s)!==(?P<stateVim>%[1]s)\.current\.vimMode\)(?P<statePermAssign>%[1]s)\.current\.permissionMode=(?P<permissionAssign>%[1]s),(?P<stateVimAssign>%[1]s)\.current\.vimMode=(?P<vimAssign>%[1]s),(?P<callbackInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<callbackDep>%[1]s)\]\);`,
+		id,
+	)
+	return shapeFamily{
+		id:        ShapeIDStatuslineDebounceV1,
+		unpatched: compilePattern(unpatchedPattern),
+		patched:   compilePattern(patchedPattern),
+	}
+}
+
+func (m regexMatch) bytes(payload []byte, name string) []byte {
+	index, ok := m.pattern.groupIndex[name]
+	if !ok {
+		return nil
+	}
+	start := m.idxs[index*2]
+	end := m.idxs[index*2+1]
+	if start < 0 || end < 0 {
+		return nil
+	}
+	return payload[start:end]
+}
+
+func (m regexMatch) string(payload []byte, name string) string {
+	return string(m.bytes(payload, name))
 }

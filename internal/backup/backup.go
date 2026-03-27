@@ -111,35 +111,35 @@ func MetadataPath(canonicalPath, originalHash string) (string, error) {
 	return filepath.Join(targetDir, fmt.Sprintf("metadata-%s.json", originalHash)), nil
 }
 
-func EnsureBackup(canonicalPath, originalHash string, data []byte) (string, error) {
+func EnsureBackup(canonicalPath, originalHash string, data []byte) (string, bool, error) {
 	targetDir, err := TargetDir(canonicalPath)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := os.MkdirAll(targetDir, stateDirMode); err != nil {
-		return "", fmt.Errorf("create target state dir: %w", err)
+		return "", false, fmt.Errorf("create target state dir: %w", err)
 	}
 
 	backupPath, err := ExpectedBackupPath(canonicalPath, originalHash)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if info, err := os.Stat(backupPath); err == nil {
 		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("existing backup is not a regular file: %s", backupPath)
+			return "", false, fmt.Errorf("existing backup is not a regular file: %s", backupPath)
 		}
 		if info.Size() != int64(len(data)) {
-			return "", fmt.Errorf("existing backup size mismatch for %s: expected %d, found %d", backupPath, len(data), info.Size())
+			return "", false, fmt.Errorf("existing backup size mismatch for %s: expected %d, found %d", backupPath, len(data), info.Size())
 		}
-		return backupPath, nil
+		return backupPath, false, nil
 	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("stat existing backup: %w", err)
+		return "", false, fmt.Errorf("stat existing backup: %w", err)
 	}
 
 	if err := writeAtomic(backupPath, data, backupFileMode); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return backupPath, nil
+	return backupPath, true, nil
 }
 
 func SaveMetadata(meta Metadata) error {
@@ -183,6 +183,20 @@ func DeleteMetadata(canonicalPath, originalHash string) error {
 			return nil
 		}
 		return fmt.Errorf("remove metadata %s: %w", path, err)
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+func DeleteBackup(canonicalPath, originalHash string) error {
+	path, err := ExpectedBackupPath(canonicalPath, originalHash)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove backup %s: %w", path, err)
 	}
 	return syncDir(filepath.Dir(path))
 }

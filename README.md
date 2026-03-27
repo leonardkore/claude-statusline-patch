@@ -4,7 +4,7 @@
 
 Phase 1 scope is intentionally small:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`
 - public commands: `apply`, `check`, `restore`, `version`
 - default interval: `1000ms`
 - transactional binary replacement with tool-owned backup state
@@ -24,7 +24,7 @@ Other OS binaries may be built for release distribution, but they are not claime
 Tagged-release install path:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@v0.1.0
+go install github.com/leonardkore/claude-statusline-patch@v0.1.2
 ```
 
 ## Usage
@@ -39,7 +39,7 @@ claude-statusline-patch check
 
 - `0` patched
 - `1` unpatched
-- `2` unsupported Claude version
+- `2` unrecognized statusline shape
 - `3` operational error
 - `4` ambiguous or structurally inconsistent patch state
 
@@ -67,7 +67,7 @@ All commands also accept:
 --binary /path/to/claude
 ```
 
-By default the CLI resolves `~/.local/bin/claude`, follows symlinks to the canonical installed binary, and patches only the supported `2.1.84` runtime.
+By default the CLI resolves `~/.local/bin/claude`, follows symlinks to the canonical installed binary, and patches any uniquely recognized statusline shape family that passes rebuild validation.
 
 ## Backup State
 
@@ -91,7 +91,7 @@ Backups are keyed by the canonical target path plus the original SHA-256 so mult
 
 Phase 1 support claims are intentionally strict:
 
-- verified Claude version: `2.1.84`
+- verified Claude versions: `2.1.84`, `2.1.85`
 - verified OS: Linux
 - verified architecture: `x86_64`
 

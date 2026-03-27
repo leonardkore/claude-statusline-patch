@@ -5,6 +5,7 @@ Phase 1 only claims live verification for:
 - Linux
 - `x86_64`
 - Claude Code `2.1.84`
+- Claude Code `2.1.85`
 
 Other OS binaries may be built, but they are not claimed as verified unless they were actually tested.
 
@@ -15,6 +16,17 @@ Phase 1 does **not** include:
 - auto-update logic
 
 ## Canonical Verification Sequence
+
+Every new Claude version starts as a quick-apply candidate:
+
+- run `check` on the real binary before editing code
+- if extraction succeeds and one known `shape_id` is reported, treat it as a matcher-layer update, not a container-layer break
+- do not widen README or release claims until the full live verification sequence passes
+
+When verifying the active default install:
+
+- `claude-statusline-switch` may report `state: unknown` if it does not have stored snapshots for that Claude version
+- use `claude-statusline-verify off 8` as the actual baseline proof instead of relying on switch metadata alone
 
 Start from a clean local baseline:
 
@@ -58,6 +70,17 @@ claude-statusline-verify off 8
 Expected restored result:
 
 - `distinct_session_seconds: [0]`
+
+Observed live-verified results on Linux `x86_64`:
+
+- Claude Code `2.1.84`
+  - baseline `off -> [0]`
+  - patched `on -> [0,1,2,3,4,5,6]`
+  - restored `off -> [0]`
+- Claude Code `2.1.85`
+  - baseline `off -> [0]`
+  - patched `on -> [0,1,2,3,4,5,6]`
+  - restored `off -> [0]`
 
 ## Important Boundary
 
