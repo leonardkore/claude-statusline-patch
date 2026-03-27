@@ -118,3 +118,41 @@ func TestDeleteMetadataRemovesSavedRecord(t *testing.T) {
 		t.Fatalf("expected metadata to be deleted")
 	}
 }
+
+func TestEnsureBackupReportsWhetherItCreatedTheBackup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	canonicalPath := filepath.Join(home, "bin", "claude")
+	contents := []byte("original-binary")
+	originalHash := SHA256Bytes(contents)
+
+	path, created, err := EnsureBackup(canonicalPath, originalHash, contents)
+	if err != nil {
+		t.Fatalf("EnsureBackup first call failed: %v", err)
+	}
+	if !created {
+		t.Fatalf("expected first EnsureBackup call to create the backup")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected backup file to exist: %v", err)
+	}
+
+	pathAgain, createdAgain, err := EnsureBackup(canonicalPath, originalHash, contents)
+	if err != nil {
+		t.Fatalf("EnsureBackup second call failed: %v", err)
+	}
+	if createdAgain {
+		t.Fatalf("expected second EnsureBackup call to reuse the existing backup")
+	}
+	if pathAgain != path {
+		t.Fatalf("expected backup path %s, got %s", path, pathAgain)
+	}
+
+	if err := DeleteBackup(canonicalPath, originalHash); err != nil {
+		t.Fatalf("DeleteBackup failed: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected backup to be removed, got err=%v", err)
+	}
+}

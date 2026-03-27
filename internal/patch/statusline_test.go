@@ -38,8 +38,8 @@ func TestInspectKnownUnpatchedFixtures(t *testing.T) {
 			if inspection.ShapeID != ShapeIDStatuslineDebounceV1 {
 				t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV1, inspection.ShapeID)
 			}
-			if inspection.LiveVerified != tc.verified {
-				t.Fatalf("expected live verified %t, got %t", tc.verified, inspection.LiveVerified)
+			if IsDocumentedLiveVerifiedVersion(tc.version) != tc.verified {
+				t.Fatalf("expected documented live verified %t for %s", tc.verified, tc.version)
 			}
 		})
 	}
@@ -76,6 +76,26 @@ func TestInspectFailsCleanlyOnUnknownShape(t *testing.T) {
 	}
 	if inspection.ShapeState != ShapeStateUnrecognized {
 		t.Fatalf("expected unrecognized shape_state, got %s", inspection.ShapeState)
+	}
+}
+
+func TestKnownShapeStillPatchesForUnverifiedVersion(t *testing.T) {
+	t.Parallel()
+
+	payload := append(versionBytes("9.9.9"), loadFixture(t, "statusline-unpatched-2.1.85.js")...)
+
+	inspection := Inspect(payload)
+	if inspection.State != StateUnpatched {
+		t.Fatalf("expected unpatched, got %s", inspection.State)
+	}
+	if inspection.ShapeID != ShapeIDStatuslineDebounceV1 {
+		t.Fatalf("expected known shape id, got %s", inspection.ShapeID)
+	}
+	if IsDocumentedLiveVerifiedVersion(inspection.Version) {
+		t.Fatalf("did not expect synthetic version to be documented live-verified")
+	}
+	if _, err := ApplyInspection(payload, inspection, 1000); err != nil {
+		t.Fatalf("expected quick-apply known shape to patch, got %v", err)
 	}
 }
 
@@ -144,14 +164,14 @@ func TestApplyProducesExpectedPatchedFixture(t *testing.T) {
 	}
 }
 
-func TestInspectMalformedPatchedIntervalIsUnrecognized(t *testing.T) {
+func TestInspectMalformedPatchedIntervalIsAmbiguous(t *testing.T) {
 	t.Parallel()
 
 	payload := append(versionBytes("2.1.85"), []byte(`,unused1=tX.useEffect(()=>{const id=setInterval(()=>L(),99999999999999999999999999999999);return()=>clearInterval(id);},[L]),Z=tX.useCallback(()=>{},[]);tX.useEffect(()=>{if($!==X.current.messageId||_!==X.current.permissionMode||q!==X.current.vimMode)X.current.permissionMode=_,X.current.vimMode=q,Z()},[$,_,q,Z]);`)...)
 
 	inspection := Inspect(payload)
-	if inspection.State != StateUnrecognizedShape {
-		t.Fatalf("expected unrecognized shape, got %s", inspection.State)
+	if inspection.State != StateAmbiguousShape {
+		t.Fatalf("expected ambiguous shape, got %s", inspection.State)
 	}
 }
 

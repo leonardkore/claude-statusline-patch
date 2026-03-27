@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/leonardkore/claude-statusline-patch/internal/backup"
 	"github.com/leonardkore/claude-statusline-patch/internal/bun"
@@ -93,40 +95,53 @@ func runApply(args []string) int {
 		return fail(fmt.Errorf("refusing to patch unknown state %q", inspection.State))
 	}
 
-	backupPath, err := backup.EnsureBackup(resolved.CanonicalPath, originalHash, originalBytes)
+	backupPath, backupCreated, err := backup.EnsureBackup(resolved.CanonicalPath, originalHash, originalBytes)
 	if err != nil {
 		return fail(err)
+	}
+	cleanupBackup := func() {
+		if backupCreated {
+			_ = backup.DeleteBackup(resolved.CanonicalPath, originalHash)
+		}
 	}
 
 	entryIndex, entryModule, err := graph.EntryPointModule()
 	if err != nil {
+		cleanupBackup()
 		return fail(err)
 	}
 	entryContents, err := graph.Slice(entryModule.Contents)
 	if err != nil {
+		cleanupBackup()
 		return fail(err)
 	}
-	patchedContents, err := patch.ApplyKnownUnpatched(entryContents, *intervalMS)
+	patchedContents, err := patch.ApplyInspection(entryContents, inspection, *intervalMS)
 	if err != nil {
+		cleanupBackup()
 		return fail(err)
 	}
 	patchedPayload, err := graph.ReplaceModuleContents(entryIndex, patchedContents)
 	if err != nil {
+		cleanupBackup()
 		return fail(err)
 	}
 	patchedBytes, err := bun.ReplacePayload(originalBytes, bundle.Metadata, patchedPayload)
 	if err != nil {
+		cleanupBackup()
 		return fail(fmt.Errorf("replace embedded payload: %w", err))
 	}
 	patchedHash := backup.SHA256Bytes(patchedBytes)
 
 	if _, _, postInspection, err := inspectBinary(patchedBytes); err != nil {
+		cleanupBackup()
 		return fail(fmt.Errorf("re-validate rebuilt binary: %w", err))
 	} else if postInspection.State != patch.StatePatched || postInspection.IntervalMS != *intervalMS {
+		cleanupBackup()
 		return fail(fmt.Errorf("re-validate rebuilt binary: expected patched %dms, got %s %dms", *intervalMS, postInspection.State, postInspection.IntervalMS))
 	}
 
 	if err := repack.WriteAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
+		cleanupBackup()
 		return fail(err)
 	}
 
@@ -144,6 +159,7 @@ func runApply(args []string) int {
 		if rollbackErr != nil {
 			return fail(fmt.Errorf("save metadata: %v; rollback failed: %w", err, rollbackErr))
 		}
+		cleanupBackup()
 		return fail(fmt.Errorf("save metadata: %w", err))
 	}
 
@@ -178,23 +194,7 @@ func runCheck(args []string) int {
 		return failCheck(err)
 	}
 
-	fmt.Printf("binary: %s\n", resolved.CanonicalPath)
-	fmt.Printf("version: %s\n", inspection.Version)
-	fmt.Printf("state: %s\n", inspection.State)
-	if inspection.ShapeState == patch.ShapeStateKnown {
-		fmt.Printf("shape_id: %s\n", inspection.ShapeID)
-	}
-	fmt.Printf("shape_state: %s\n", inspection.ShapeState)
-	fmt.Printf("patch_state: %s\n", inspection.PatchState)
-	if inspection.State == patch.StatePatched {
-		fmt.Printf("interval_ms: %d\n", inspection.IntervalMS)
-	}
-	if inspection.LiveVerified {
-		fmt.Printf("verification_claim: live-verified\n")
-	} else {
-		fmt.Printf("verification_claim: not-live-verified\n")
-	}
-	fmt.Printf("managed: %t\n", managed != nil)
+	fmt.Print(formatCheckOutput(resolved.CanonicalPath, inspection, managed != nil))
 
 	switch inspection.State {
 	case patch.StatePatched:
@@ -208,6 +208,40 @@ func runCheck(args []string) int {
 	default:
 		return 3
 	}
+}
+
+func formatCheckOutput(binaryPath string, inspection patch.Inspection, managed bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "binary: %s\n", binaryPath)
+	fmt.Fprintf(&b, "version: %s\n", inspection.Version)
+	fmt.Fprintf(&b, "state: %s\n", inspection.State)
+	if inspection.ShapeState == patch.ShapeStateKnown {
+		fmt.Fprintf(&b, "shape_id: %s\n", inspection.ShapeID)
+	}
+	fmt.Fprintf(&b, "shape_state: %s\n", inspection.ShapeState)
+	fmt.Fprintf(&b, "patch_state: %s\n", inspection.PatchState)
+	if inspection.State == patch.StatePatched {
+		fmt.Fprintf(&b, "interval_ms: %d\n", inspection.IntervalMS)
+	}
+	fmt.Fprintf(&b, "verification_claim: %s\n", verificationClaim(inspection))
+	fmt.Fprintf(&b, "managed: %t\n", managed)
+	return b.String()
+}
+
+func verificationClaim(inspection patch.Inspection) string {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		return "not-live-verified"
+	}
+	if inspection.ShapeState != patch.ShapeStateKnown {
+		return "not-live-verified"
+	}
+	if inspection.PatchState == patch.PatchStateUnknown {
+		return "not-live-verified"
+	}
+	if !patch.IsDocumentedLiveVerifiedVersion(inspection.Version) {
+		return "not-live-verified"
+	}
+	return "live-verified"
 }
 
 func runRestore(args []string) int {
