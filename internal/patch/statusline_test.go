@@ -275,7 +275,7 @@ func TestInspectForeignContentIsUnrecognized(t *testing.T) {
 func TestDetectVersionPrefersClaudeMetadataVersion(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`IMDS_VERSION:"2020-06-01",PACKAGE_URL:"@anthropic-ai/claude-code",README_URL:"https://code.claude.com/docs/en/overview",VERSION:"2.1.86",FEEDBACK_CHANNEL:"https://github.com/anthropics/claude-code/issues",BUILD_TIME:"2026-03-27T20:29:28Z"`)
+	payload := []byte(`VERSION:"1.0.0";console.log("foreign content");IMDS_VERSION:"2020-06-01",PACKAGE_URL:"@anthropic-ai/claude-code",README_URL:"https://code.claude.com/docs/en/overview",VERSION:"2.1.86",FEEDBACK_CHANNEL:"https://github.com/anthropics/claude-code/issues",BUILD_TIME:"2026-03-27T20:29:28Z"`)
 	if got := DetectVersion(payload); got != "2.1.86" {
 		t.Fatalf("expected 2.1.86, got %q", got)
 	}

@@ -79,7 +79,7 @@ Release notes must include:
 - install instructions:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@v0.2.3
+go install github.com/leonardkore/claude-statusline-patch@<next-release-tag-vX.Y.Z>
 ```
 
 - warning that only Linux + Claude `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87` are live-verified unless more testing was actually done
