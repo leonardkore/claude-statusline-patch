@@ -2,7 +2,7 @@
 
 Phase 1 release policy is strict:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`
 - other OS binaries may be built and attached, but they must not be described as live-verified unless they were actually tested
 - no `tweakcc` integration, no hook logic, no auto-update logic
 - support for a new Claude version is a patch release unless the CLI contract changes
@@ -24,7 +24,7 @@ Before opening a PR:
 
 The PR must record:
 
-- Claude version tested: exact tested version(s), for example `2.1.84`, `2.1.85`, `2.1.86`
+- Claude version tested: exact tested version(s), for example `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`
 - OS tested: Linux
 - architecture tested: `x86_64`
 - external patchers inactive during verification: yes
@@ -55,8 +55,8 @@ git push origin <next-release-tag-vX.Y.Z>
 Example:
 
 ```bash
-git tag -a v0.1.3 -m "v0.1.3"
-git push origin v0.1.3
+git tag -a v0.2.3 -m "v0.2.3"
+git push origin v0.2.3
 ```
 
 Do not tag from the feature branch.
@@ -72,14 +72,14 @@ Release title:
 
 Release notes must include:
 
-- supported Claude versions verified: `2.1.84`, `2.1.85`, `2.1.86`
+- supported Claude versions verified: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`
 - supported OS live-verified: Linux
 - binaries attached for each target in the build matrix
 - `SHA256SUMS.txt`
 - install instructions:
 
 ```bash
-go install github.com/leonardkore/claude-statusline-patch@<next-release-tag-vX.Y.Z>
+go install github.com/leonardkore/claude-statusline-patch@v0.2.3
 ```
 
-- warning that only Linux + Claude `2.1.84`, `2.1.85`, `2.1.86` are live-verified unless more testing was actually done
+- warning that only Linux + Claude `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87` are live-verified unless more testing was actually done
