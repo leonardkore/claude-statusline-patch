@@ -1,0 +1,1 @@
+,unused1=Qj.useEffect(()=>{const id=setInterval(()=>W(),1000);return()=>clearInterval(id);},[W]),T=Qj.useCallback(()=>{},[]);Qj.useEffect(()=>{if($!==P.current.messageId||_!==P.current.permissionMode||q!==P.current.vimMode||D!==P.current.mainLoopModel)P.current.permissionMode=_,P.current.vimMode=q,P.current.mainLoopModel=D,T()},[$,_,q,D,T]);
