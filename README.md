@@ -4,7 +4,7 @@
 
 Phase 1 scope is intentionally small:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`
 - public commands: `apply`, `check`, `restore`, `version`
 - default interval: `1000ms`
 - transactional binary replacement with tool-owned backup state
@@ -116,7 +116,7 @@ Backups are keyed by the canonical target path plus the original SHA-256 so mult
 
 Phase 1 support claims are intentionally strict:
 
-- verified Claude versions: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`
+- verified Claude versions: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`
 - verified OS: Linux
 - verified architecture: `x86_64`
 
@@ -128,6 +128,7 @@ Phase 1 support claims are intentionally strict:
 | Linux `x86_64` | `2.1.85` | `statusline_debounce_v1` | yes | yes | `v0.1.2` | real unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | `2.1.86` | `statusline_debounce_v2` | yes | yes | `v0.2.2` | real unpatched fixture and generated patched fixture tracked; version detection narrowed to the Claude metadata block |
 | Linux `x86_64` | `2.1.87` | `statusline_debounce_v2` | yes | yes | `v0.2.3` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
+| Linux `x86_64` | `2.1.89` | `statusline_debounce_v2` | yes | yes | `v0.2.4` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | future version with known family | `statusline_debounce_v1` or later | maybe | no, until live-verified | UNKNOWN | use `check` then `apply --dry-run` before changing code |
 
 See [docs/verification.md](docs/verification.md) for the exact local verification sequence and [docs/releasing.md](docs/releasing.md) for release rules and asset expectations.
