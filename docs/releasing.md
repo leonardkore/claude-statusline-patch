@@ -55,8 +55,8 @@ git push origin <next-release-tag-vX.Y.Z>
 Example:
 
 ```bash
-git tag -a v0.2.5 -m "v0.2.5"
-git push origin v0.2.5
+git tag -a v0.2.4 -m "v0.2.4"
+git push origin v0.2.4
 ```
 
 Do not tag from the feature branch.

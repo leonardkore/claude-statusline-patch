@@ -129,7 +129,7 @@ Phase 1 support claims are intentionally strict:
 | Linux `x86_64` | `2.1.86` | `statusline_debounce_v2` | yes | yes | `v0.2.2` | real unpatched fixture and generated patched fixture tracked; version detection narrowed to the Claude metadata block |
 | Linux `x86_64` | `2.1.87` | `statusline_debounce_v2` | yes | yes | `v0.2.3` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | `2.1.89` | `statusline_debounce_v2` | yes | yes | `v0.2.4` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
-| Linux `x86_64` | `2.1.90` | `statusline_debounce_v2` | yes | yes | `v0.2.5` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
+| Linux `x86_64` | `2.1.90` | `statusline_debounce_v2` | yes | yes | `v0.2.4` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | future version with known family | `statusline_debounce_v1` or later | maybe | no, until live-verified | UNKNOWN | use `check` then `apply --dry-run` before changing code |
 
 See [docs/verification.md](docs/verification.md) for the exact local verification sequence and [docs/releasing.md](docs/releasing.md) for release rules and asset expectations.
