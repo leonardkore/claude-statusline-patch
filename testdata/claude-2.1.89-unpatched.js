@@ -1,0 +1,1 @@
+,v=OP.useCallback(()=>{if(L.current!==void 0)clearTimeout(L.current);L.current=setTimeout((I,h)=>{I.current=void 0,h()},300,L,W)},[W]);OP.useEffect(()=>{if($!==X.current.messageId||_!==X.current.permissionMode||q!==X.current.vimMode||w!==X.current.mainLoopModel)X.current.permissionMode=_,X.current.vimMode=q,X.current.mainLoopModel=w,v()},[$,_,q,w,v]);
