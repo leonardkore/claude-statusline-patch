@@ -1,0 +1,1 @@
+,unused1=WP.useEffect(()=>{const id=setInterval(()=>W(),1000);return()=>clearInterval(id);},[W]),v=WP.useCallback(()=>{},[]);WP.useEffect(()=>{if($!==X.current.messageId||_!==X.current.permissionMode||q!==X.current.vimMode||w!==X.current.mainLoopModel)X.current.permissionMode=_,X.current.vimMode=q,X.current.mainLoopModel=w,v()},[$,_,q,w,v]);
