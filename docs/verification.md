@@ -10,6 +10,7 @@ Phase 1 only claims live verification for:
 - Claude Code `2.1.87`
 - Claude Code `2.1.89`
 - Claude Code `2.1.90`
+- Claude Code `2.1.91`
 
 Other OS binaries may be built, but they are not claimed as verified unless they were actually tested.
 
@@ -52,6 +53,7 @@ When verifying the active default install:
 
 - `claude-statusline-switch` may report `state: unknown` if it does not have stored snapshots for that Claude version
 - use `claude-statusline-verify off 8` as the actual baseline proof instead of relying on switch metadata alone
+- if `claude-statusline-switch off` causes `check --binary <path-to-new-version>` to report a different Claude version than the binary path under test, restore the live binary before version-specific `apply` verification
 
 Start from a clean local baseline:
 
@@ -129,6 +131,10 @@ Observed live-verified results on Linux `x86_64`:
   - patched `on -> [0,1,2,3,4,5,6]`
   - restored `off -> [0]`
 - Claude Code `2.1.90`
+  - baseline `off -> [0]`
+  - patched `on -> [0,1,2,3,4,5,6]`
+  - restored `off -> [0]`
+- Claude Code `2.1.91`
   - baseline `off -> [0]`
   - patched `on -> [0,1,2,3,4,5,6]`
   - restored `off -> [0]`
