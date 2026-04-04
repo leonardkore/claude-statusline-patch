@@ -98,7 +98,7 @@ type scanResult struct {
 var (
 	identifierPattern      = `[A-Za-z_$][A-Za-z0-9_$]*`
 	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2()}
-	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}}
+	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}}
 )
 
 func Inspect(payload []byte) Inspection {
@@ -443,7 +443,7 @@ func newStatuslineDebounceV2() shapeFamily {
 	)
 	return shapeFamily{
 		id:                ShapeIDStatuslineDebounceV2,
-		observedVersions:  []string{"2.1.86", "2.1.87", "2.1.89", "2.1.90", "2.1.91"},
+		observedVersions:  []string{"2.1.86", "2.1.87", "2.1.89", "2.1.90", "2.1.91", "2.1.92"},
 		unpatched:         compilePattern(unpatchedPattern),
 		patched:           compilePattern(patchedPattern),
 		validateUnpatched: validateUnpatchedMatchV2,
