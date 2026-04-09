@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,8 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/bun"
 	"github.com/leonardkore/claude-statusline-patch/internal/patch"
 	"github.com/leonardkore/claude-statusline-patch/internal/repack"
+	"github.com/leonardkore/claude-statusline-patch/internal/targetlock"
+	"github.com/leonardkore/claude-statusline-patch/internal/verifier"
 )
 
 func TestFormatCheckOutputIncludesKnownShapeAndSupportClaim(t *testing.T) {
@@ -374,6 +377,411 @@ func TestRunApplyPreservesNewBackupWhenAtomicWriteFailsAfterCommit(t *testing.T)
 	}
 }
 
+func TestRunEnsureKnownUnpatchedAppliesAndVerifies(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		return verifier.Result{
+			Mode:                   "on",
+			DurationSeconds:        durationSeconds,
+			DistinctSessionSeconds: []int{0, 1, 2, 3, 4},
+			Passed:                 true,
+		}, nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-unpatched", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected ensure success, got exit %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	for _, fragment := range []string{
+		"ensure_outcome: verified_success",
+		"ensure_action: applied_and_verified",
+		"verification_passed: true",
+		"verification_distinct_session_seconds: 0, 1, 2, 3, 4",
+		"DONE",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+
+	patchedBytes := mustReadFile(t, binaryPath)
+	_, _, inspection, err := inspectBinary(patchedBytes)
+	if err != nil {
+		t.Fatalf("inspectBinary failed: %v", err)
+	}
+	if inspection.State != patch.StatePatched || inspection.IntervalMS != 1000 {
+		t.Fatalf("expected patched binary at 1000ms, got %+v", inspection)
+	}
+
+	record, err := backup.LoadVerifiedOutcome(binaryPath, backup.SHA256Bytes(patchedBytes), 1000, runtime.GOOS, runtime.GOARCH, ensureVerifierContractVersion)
+	if err != nil {
+		t.Fatalf("LoadVerifiedOutcome failed: %v", err)
+	}
+	if record == nil {
+		t.Fatalf("expected verified outcome record")
+	}
+}
+
+func TestRunEnsureAlreadyVerifiedExactTupleSkipsVerifier(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		t.Fatalf("verifyCurrentBinary should not be called on exact tuple match")
+		return verifier.Result{}, nil
+	}
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	originalBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(originalPayload))
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	patchedBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(patchedPayload))
+
+	binaryPath := filepath.Join(tempDir, "ensure-already-verified")
+	if err := os.WriteFile(binaryPath, patchedBinary, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	originalHash := backup.SHA256Bytes(originalBinary)
+	patchedHash := backup.SHA256Bytes(patchedBinary)
+	backupPath, _, err := backup.EnsureBackup(binaryPath, originalHash, originalBinary)
+	if err != nil {
+		t.Fatalf("EnsureBackup failed: %v", err)
+	}
+	if err := backup.SaveMetadata(backup.Metadata{
+		CanonicalPath:   binaryPath,
+		DisplayPath:     binaryPath,
+		DetectedVersion: "2.1.85",
+		OriginalSHA256:  originalHash,
+		PatchedSHA256:   patchedHash,
+		IntervalMS:      1000,
+		BackupPath:      backupPath,
+		FileMode:        0o755,
+	}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+	if err := backup.SaveVerifiedOutcome(backup.VerifiedOutcome{
+		CanonicalPath:           binaryPath,
+		InstalledSHA256:         patchedHash,
+		IntervalMS:              1000,
+		PlatformGOOS:            runtime.GOOS,
+		PlatformGOARCH:          runtime.GOARCH,
+		VerifierContractVersion: ensureVerifierContractVersion,
+		DetectedVersion:         "2.1.85",
+	}); err != nil {
+		t.Fatalf("SaveVerifiedOutcome failed: %v", err)
+	}
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected ensure success, got exit %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_action: already_verified_exact_tuple") {
+		t.Fatalf("expected exact tuple action, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "verified_tuple_match: true") {
+		t.Fatalf("expected verified tuple match, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+func TestRunEnsureUnknownShapeReturnsPatchUpdateRequired(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		t.Fatalf("verifyCurrentBinary should not be called for unknown shape")
+		return verifier.Result{}, nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-unknown", fixturePayloadByID(t, "negative-2.1.85-unrecognized-delay"))
+	original := mustReadFile(t, binaryPath)
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 1 {
+		t.Fatalf("expected patch update required exit 1, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_outcome: patch_update_required") || !strings.Contains(stdout, "ensure_reason: unrecognized_shape") {
+		t.Fatalf("expected patch update required output, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, original) {
+		t.Fatalf("expected unknown shape to leave binary unchanged")
+	}
+}
+
+func TestRunEnsureAmbiguousShapeReturnsPatchUpdateRequired(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		t.Fatalf("verifyCurrentBinary should not be called for ambiguous shape")
+		return verifier.Result{}, nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-ambiguous", fixturePayloadByID(t, "negative-2.1.85-duplicate-unpatched"))
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 1 {
+		t.Fatalf("expected patch update required exit 1, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_reason: ambiguous_shape") {
+		t.Fatalf("expected ambiguous shape reason, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+func TestRunEnsureVerificationFailureRestoresMutatedBinary(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		return verifier.Result{
+			Mode:                   "on",
+			DurationSeconds:        durationSeconds,
+			DistinctSessionSeconds: []int{0},
+			Passed:                 false,
+		}, nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-restore", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+	original := mustReadFile(t, binaryPath)
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 1 {
+		t.Fatalf("expected patch update required exit 1, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	for _, fragment := range []string{
+		"ensure_outcome: patch_update_required",
+		"ensure_reason: live_verification_failed_after_apply",
+		"mutated_this_run: true",
+		"restored_this_run: true",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, original) {
+		t.Fatalf("expected binary to be restored after failed verification")
+	}
+	if record, err := backup.LoadMatchingRecord(binaryPath, backup.SHA256Bytes(original)); err != nil {
+		t.Fatalf("LoadMatchingRecord failed: %v", err)
+	} else if record != nil {
+		t.Fatalf("expected restore path to remove managed metadata")
+	}
+}
+
+func TestRunEnsureManagedPatchedUnverifiedRerunVerifiesExistingPatch(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		return verifier.Result{
+			Mode:                   "on",
+			DurationSeconds:        durationSeconds,
+			DistinctSessionSeconds: []int{0, 1, 2, 3, 4},
+			Passed:                 true,
+		}, nil
+	}
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	originalBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(originalPayload))
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	patchedBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(patchedPayload))
+
+	binaryPath := filepath.Join(tempDir, "ensure-rerun")
+	if err := os.WriteFile(binaryPath, patchedBinary, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	originalHash := backup.SHA256Bytes(originalBinary)
+	patchedHash := backup.SHA256Bytes(patchedBinary)
+	backupPath, _, err := backup.EnsureBackup(binaryPath, originalHash, originalBinary)
+	if err != nil {
+		t.Fatalf("EnsureBackup failed: %v", err)
+	}
+	if err := backup.SaveMetadata(backup.Metadata{
+		CanonicalPath:   binaryPath,
+		DisplayPath:     binaryPath,
+		DetectedVersion: "2.1.85",
+		OriginalSHA256:  originalHash,
+		PatchedSHA256:   patchedHash,
+		IntervalMS:      1000,
+		BackupPath:      backupPath,
+		FileMode:        0o755,
+	}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected verify-existing-patch success, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_action: verified_existing_patch") {
+		t.Fatalf("expected verified existing patch action, got %q", stdout)
+	}
+	if strings.Contains(stdout, "mutated_this_run: true") {
+		t.Fatalf("expected no mutation during re-entry verification, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+
+	record, err := backup.LoadVerifiedOutcome(binaryPath, patchedHash, 1000, runtime.GOOS, runtime.GOARCH, ensureVerifierContractVersion)
+	if err != nil {
+		t.Fatalf("LoadVerifiedOutcome failed: %v", err)
+	}
+	if record == nil {
+		t.Fatalf("expected verified outcome record after rerun verification")
+	}
+}
+
+func TestRunEnsureUnmanagedPatchedReturnsOperatorInterventionRequired(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		t.Fatalf("verifyCurrentBinary should not be called for unmanaged patched binary")
+		return verifier.Result{}, nil
+	}
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	binaryPath := writeTestBinary(t, tempDir, "ensure-unmanaged-patched", patchedPayload)
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 3 {
+		t.Fatalf("expected operator intervention exit 3, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_reason: unmanaged_patched") {
+		t.Fatalf("expected unmanaged patched reason, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+func TestRunEnsureLockBusyReturnsOperatorInterventionRequired(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("lock busy test requires unix flock implementation")
+	}
+
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		t.Fatalf("verifyCurrentBinary should not be called when lock is busy")
+		return verifier.Result{}, nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-lock-busy", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+	release, err := targetlock.Acquire(binaryPath)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	defer func() {
+		_ = release()
+	}()
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 3 {
+		t.Fatalf("expected operator intervention exit 3, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_reason: lock_busy") {
+		t.Fatalf("expected lock busy reason, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+}
+
+func TestRunEnsureVerifierUnavailableRestoresAndReturnsInconclusive(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
+		return verifier.Result{}, verifier.ErrUnavailable
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-verifier-unavailable", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+	original := mustReadFile(t, binaryPath)
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 2 {
+		t.Fatalf("expected verification inconclusive exit 2, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_outcome: verification_inconclusive_or_unavailable") {
+		t.Fatalf("expected inconclusive outcome, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "restored_this_run: true") {
+		t.Fatalf("expected restore on verifier unavailable after apply, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, original) {
+		t.Fatalf("expected binary to be restored after verifier unavailable")
+	}
+}
+
 type fixtureManifest struct {
 	Fixtures []fixtureRecord `json:"fixtures"`
 }
@@ -446,6 +854,40 @@ func captureRunApply(t *testing.T, args ...string) (int, string, string) {
 	}()
 
 	exitCode := runApply(args)
+
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+
+	stdoutBytes, _ := io.ReadAll(stdoutR)
+	stderrBytes, _ := io.ReadAll(stderrR)
+	_ = stdoutR.Close()
+	_ = stderrR.Close()
+
+	return exitCode, string(stdoutBytes), string(stderrBytes)
+}
+
+func captureRunEnsure(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+	}()
+
+	exitCode := runEnsure(args)
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()

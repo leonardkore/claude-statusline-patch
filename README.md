@@ -4,8 +4,8 @@
 
 Phase 1 scope is intentionally small:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`
-- public commands: `apply`, `check`, `restore`, `version`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`
+- public commands: `ensure`, `apply`, `check`, `restore`, `version`
 - default interval: `1000ms`
 - transactional binary replacement with tool-owned backup state
 - `apply --dry-run` preflight uses the real apply/rebuild path without mutating the binary
@@ -36,7 +36,23 @@ go install github.com/leonardkore/claude-statusline-patch@vX.Y.Z
 
 ## Usage
 
-Check the current binary state:
+Normal path after a Claude update:
+
+```bash
+claude-statusline-patch ensure
+```
+
+`ensure` is the default operator path. It resolves the active Claude binary, acquires a per-binary lock, classifies the current state, applies the patch only when needed, runs live verification using the existing 8-sample local verifier semantics on Linux `x86_64`, and prints `DONE` only after verified success.
+
+`ensure` exit codes:
+
+- `0` verified success
+- `1` patch update required
+- `2` verification inconclusive or unavailable
+- `3` operator intervention required
+- `4` local error
+
+Low-level inspection path:
 
 ```bash
 claude-statusline-patch check
@@ -80,7 +96,28 @@ All commands also accept:
 --binary /path/to/claude
 ```
 
+`ensure`, `apply`, and `restore` also accept:
+
+```bash
+--interval-ms 1000
+```
+
 By default the CLI resolves `~/.local/bin/claude`, follows symlinks to the canonical installed binary, and patches any uniquely recognized statusline shape family that passes rebuild validation.
+
+`ensure` reports:
+
+- `ensure_outcome` as one of:
+  - `verified_success`
+  - `patch_update_required`
+  - `verification_inconclusive_or_unavailable`
+  - `operator_intervention_required`
+  - `local_error`
+- `ensure_action` when the run completed successfully by:
+  - exact verified tuple short-circuit
+  - verifying an existing managed patch
+  - applying and verifying during the current run
+- `verified_tuple_match: true` only when the current installed bytes, interval, platform tuple, and verifier-contract version exactly match a previously verified tuple
+- `DONE` only when the active binary is verified safe for the requested interval
 
 `check` reports:
 
@@ -116,7 +153,7 @@ Backups are keyed by the canonical target path plus the original SHA-256 so mult
 
 Phase 1 support claims are intentionally strict:
 
-- verified Claude versions: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`
+- verified Claude versions: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`
 - verified OS: Linux
 - verified architecture: `x86_64`
 
@@ -133,6 +170,7 @@ Phase 1 support claims are intentionally strict:
 | Linux `x86_64` | `2.1.91` | `statusline_debounce_v2` | yes | yes | `v0.2.5` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | `2.1.92` | `statusline_debounce_v2` | yes | yes | `v0.2.6` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | `2.1.94` | `statusline_debounce_v2` | yes | yes | `v0.2.7` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
+| Linux `x86_64` | `2.1.97` | `statusline_debounce_v2` | yes | yes | `v0.2.8` | live-verified quick-apply candidate; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | future version with known family | `statusline_debounce_v1` or later | maybe | no, until live-verified | UNKNOWN | use `check` then `apply --dry-run` before changing code |
 
 See [docs/verification.md](docs/verification.md) for the exact local verification sequence and [docs/releasing.md](docs/releasing.md) for release rules and asset expectations.

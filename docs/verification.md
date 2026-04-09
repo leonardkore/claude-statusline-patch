@@ -13,6 +13,7 @@ Phase 1 only claims live verification for:
 - Claude Code `2.1.91`
 - Claude Code `2.1.92`
 - Claude Code `2.1.94`
+- Claude Code `2.1.97`
 
 Other OS binaries may be built, but they are not claimed as verified unless they were actually tested.
 
@@ -23,6 +24,14 @@ Phase 1 does **not** include:
 - auto-update logic
 
 ## Canonical Verification Sequence
+
+Default operator path on Linux `x86_64`:
+
+```bash
+claude-statusline-patch ensure
+```
+
+`ensure` is the normal path for the active Claude binary. It owns resolve -> inspect -> dry-run validation -> apply-if-needed -> live verify -> conditional rollback as one local transaction and prints `DONE` only after verified success.
 
 Every new Claude version starts as a quick-apply candidate:
 
@@ -147,6 +156,10 @@ Observed live-verified results on Linux `x86_64`:
 - Claude Code `2.1.94`
   - baseline `off -> [0]`
   - patched `on -> [0,1,2,3,4,5,6,7,8]`
+  - restored `off -> [0]`
+- Claude Code `2.1.97`
+  - baseline `off -> [0]`
+  - patched `on -> [0,1,2,3,4,5,6]`
   - restored `off -> [0]`
 
 ## Important Boundary

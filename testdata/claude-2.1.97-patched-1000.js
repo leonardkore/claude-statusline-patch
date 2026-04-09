@@ -1,0 +1,1 @@
+,unused1=mj.useEffect(()=>{const id=setInterval(()=>W(),1000);return()=>clearInterval(id);},[W]),v=mj.useCallback(()=>{},[]);mj.useEffect(()=>{if($!==L.current.messageId||_!==L.current.permissionMode||q!==L.current.vimMode||M!==L.current.mainLoopModel)L.current.permissionMode=_,L.current.vimMode=q,L.current.mainLoopModel=M,v()},[$,_,q,M,v]);
