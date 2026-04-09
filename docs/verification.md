@@ -25,6 +25,14 @@ Phase 1 does **not** include:
 
 ## Canonical Verification Sequence
 
+Default operator path on Linux `x86_64`:
+
+```bash
+claude-statusline-patch ensure
+```
+
+`ensure` is the normal path for the active Claude binary. It owns resolve -> inspect -> dry-run validation -> apply-if-needed -> live verify -> conditional rollback as one local transaction and prints `DONE` only after verified success.
+
 Every new Claude version starts as a quick-apply candidate:
 
 - run `check` on the real binary before editing code

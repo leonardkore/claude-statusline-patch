@@ -29,6 +29,8 @@ func Main(args []string) int {
 	}
 
 	switch args[0] {
+	case "ensure":
+		return runEnsure(args[1:])
 	case "apply":
 		return runApply(args[1:])
 	case "check":
@@ -444,7 +446,7 @@ func readBoundedFile(path string, maxSize int64) ([]byte, error) {
 }
 
 func printUsage(w *os.File) {
-	fmt.Fprintf(w, "usage: %s {apply|check|restore|version} [flags]\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(w, "usage: %s {ensure|apply|check|restore|version} [flags]\n", filepath.Base(os.Args[0]))
 }
 
 func sanitizeOutputValue(value string) string {

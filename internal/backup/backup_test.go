@@ -188,3 +188,56 @@ func TestEnsureBackupRejectsExistingBackupHashMismatch(t *testing.T) {
 		t.Fatalf("expected error to mention backup path %s, got %v", got, err)
 	}
 }
+
+func TestLoadVerifiedOutcomeRequiresExactTupleMatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	canonicalPath := filepath.Join(home, "bin", "claude")
+	record := VerifiedOutcome{
+		CanonicalPath:           canonicalPath,
+		InstalledSHA256:         "patched-sha",
+		IntervalMS:              1000,
+		PlatformGOOS:            "linux",
+		PlatformGOARCH:          "amd64",
+		VerifierContractVersion: 1,
+		DetectedVersion:         "2.1.97",
+	}
+	if err := SaveVerifiedOutcome(record); err != nil {
+		t.Fatalf("SaveVerifiedOutcome failed: %v", err)
+	}
+
+	exact, err := LoadVerifiedOutcome(canonicalPath, "patched-sha", 1000, "linux", "amd64", 1)
+	if err != nil {
+		t.Fatalf("LoadVerifiedOutcome exact failed: %v", err)
+	}
+	if exact == nil {
+		t.Fatalf("expected exact verified outcome match")
+	}
+
+	mismatchCases := []struct {
+		name            string
+		installedSHA    string
+		intervalMS      int
+		goos            string
+		goarch          string
+		contractVersion int
+	}{
+		{name: "hash", installedSHA: "other-sha", intervalMS: 1000, goos: "linux", goarch: "amd64", contractVersion: 1},
+		{name: "interval", installedSHA: "patched-sha", intervalMS: 1500, goos: "linux", goarch: "amd64", contractVersion: 1},
+		{name: "platform", installedSHA: "patched-sha", intervalMS: 1000, goos: "darwin", goarch: "amd64", contractVersion: 1},
+		{name: "contract", installedSHA: "patched-sha", intervalMS: 1000, goos: "linux", goarch: "amd64", contractVersion: 2},
+	}
+	for _, tc := range mismatchCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LoadVerifiedOutcome(canonicalPath, tc.installedSHA, tc.intervalMS, tc.goos, tc.goarch, tc.contractVersion)
+			if err != nil {
+				t.Fatalf("LoadVerifiedOutcome mismatch failed: %v", err)
+			}
+			if got != nil {
+				t.Fatalf("expected no verified outcome for mismatch case %s", tc.name)
+			}
+		})
+	}
+}
