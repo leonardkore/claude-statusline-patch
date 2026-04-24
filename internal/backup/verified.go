@@ -100,7 +100,7 @@ func LoadVerifiedOutcome(canonicalPath, installedHash string, intervalMS int, go
 		return nil, fmt.Errorf("parse verified outcome %s: %w", path, err)
 	}
 	if err := validateVerifiedOutcome(record); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("invalid verified outcome %s: %w", path, err)
 	}
 	if record.CanonicalPath != canonicalPath ||
 		record.InstalledSHA256 != installedHash ||

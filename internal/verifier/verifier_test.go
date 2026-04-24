@@ -5,16 +5,29 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestVerifyRejectsPassedJSONFromFailingVerifier(t *testing.T) {
-	withVerifierHelper(t, `{"mode":"on","target_binary":"/target","duration_seconds":8,"verifier_contract_version":1,"event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 1)
+	withVerifierHelper(t, `{"mode":"on","target_binary":"/target","run_id":"run-1","duration_seconds":8,"verifier_contract_version":1,"events_file":"events.jsonl","pane_capture_file":"pane.txt","event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 1)
 
 	_, err := VerifyWithOptions(context.Background(), Options{Mode: "on", DurationSeconds: 8, TargetBinary: "/target", ContractVersion: 1})
 	if err == nil {
 		t.Fatalf("expected failing verifier with passed=true to be rejected")
+	}
+	if !strings.Contains(err.Error(), "run verifier") {
+		t.Fatalf("expected run verifier error, got %v", err)
+	}
+}
+
+func TestVerifyRejectsFailedEnvelopeFromUnexpectedExit(t *testing.T) {
+	withVerifierHelper(t, `{"mode":"on","target_binary":"/target","duration_seconds":8,"verifier_contract_version":1,"event_count":1,"distinct_session_seconds":[0],"passed":false}`, 2)
+
+	_, err := VerifyWithOptions(context.Background(), Options{Mode: "on", DurationSeconds: 8, TargetBinary: "/target", ContractVersion: 1})
+	if err == nil {
+		t.Fatalf("expected unexpected verifier exit to be rejected")
 	}
 	if !strings.Contains(err.Error(), "run verifier") {
 		t.Fatalf("expected run verifier error, got %v", err)
@@ -46,7 +59,7 @@ func TestVerifyAcceptsFailedVerificationEnvelope(t *testing.T) {
 }
 
 func TestVerifyPassesTargetAndContractEnvironment(t *testing.T) {
-	withVerifierHelper(t, `{"mode":"on","target_binary":"/target","duration_seconds":8,"verifier_contract_version":7,"event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 0)
+	withVerifierHelper(t, `{"mode":"on","target_binary":"/target","run_id":"run-1","duration_seconds":8,"verifier_contract_version":7,"events_file":"events.jsonl","pane_capture_file":"pane.txt","event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 0)
 
 	result, err := VerifyWithOptions(context.Background(), Options{Mode: "on", DurationSeconds: 8, TargetBinary: "/target", ContractVersion: 7})
 	if err != nil {
@@ -58,7 +71,7 @@ func TestVerifyPassesTargetAndContractEnvironment(t *testing.T) {
 }
 
 func TestVerifyRejectsTargetMismatch(t *testing.T) {
-	withVerifierHelper(t, `{"mode":"on","target_binary":"/other","duration_seconds":8,"verifier_contract_version":1,"event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 0)
+	withVerifierHelper(t, `{"mode":"on","target_binary":"/other","run_id":"run-1","duration_seconds":8,"verifier_contract_version":1,"events_file":"events.jsonl","pane_capture_file":"pane.txt","event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 0)
 
 	_, err := VerifyWithOptions(context.Background(), Options{Mode: "on", DurationSeconds: 8, TargetBinary: "/target", ContractVersion: 1})
 	if err == nil {
@@ -66,6 +79,18 @@ func TestVerifyRejectsTargetMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "target mismatch") {
 		t.Fatalf("expected target mismatch, got %v", err)
+	}
+}
+
+func TestVerifyRejectsPassedResultMissingRequiredContractFields(t *testing.T) {
+	withVerifierHelper(t, `{"mode":"on","duration_seconds":8,"event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 0)
+
+	_, err := VerifyWithOptions(context.Background(), Options{Mode: "on", DurationSeconds: 8, TargetBinary: "/target", ContractVersion: 1})
+	if err == nil {
+		t.Fatalf("expected passed verifier result without contract fields to be rejected")
+	}
+	if !strings.Contains(err.Error(), "target") {
+		t.Fatalf("expected target contract error, got %v", err)
 	}
 }
 
@@ -88,7 +113,7 @@ func withVerifierHelper(t *testing.T, stdout string, exitCode int) {
 		cmd.Env = append(os.Environ(),
 			"GO_WANT_VERIFIER_HELPER_PROCESS=1",
 			"VERIFIER_HELPER_STDOUT="+stdout,
-			"VERIFIER_HELPER_EXIT_CODE="+string(rune('0'+exitCode)),
+			"VERIFIER_HELPER_EXIT_CODE="+strconv.Itoa(exitCode),
 		)
 		return cmd
 	}
@@ -112,6 +137,8 @@ func TestVerifierHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "1":
 		os.Exit(1)
+	case "2":
+		os.Exit(2)
 	default:
 		os.Exit(2)
 	}
