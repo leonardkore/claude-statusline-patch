@@ -87,8 +87,10 @@ func VerifyWithOptions(ctx context.Context, options Options) (Result, error) {
 		if err := validateResult(result, options); err != nil {
 			return Result{}, err
 		}
-		if runErr != nil && result.Passed {
-			return Result{}, verifierRunError(runErr, stderr.String())
+		if runErr != nil {
+			if result.Passed || !isExpectedVerificationFailure(runErr) {
+				return Result{}, verifierRunError(runErr, stderr.String())
+			}
 		}
 		return result, nil
 	}
@@ -138,6 +140,18 @@ func validateResult(result Result, options Options) error {
 	if options.ContractVersion > 0 && result.VerifierContractVersion != options.ContractVersion {
 		return fmt.Errorf("verifier contract mismatch: expected %d, got %d", options.ContractVersion, result.VerifierContractVersion)
 	}
+	if result.Passed && strings.TrimSpace(result.TargetBinary) == "" {
+		return fmt.Errorf("verifier passed with empty target binary")
+	}
+	if result.Passed && result.VerifierContractVersion <= 0 {
+		return fmt.Errorf("verifier passed with invalid contract version")
+	}
+	if result.Passed && strings.TrimSpace(result.RunID) == "" {
+		return fmt.Errorf("verifier passed with empty run id")
+	}
+	if result.Passed && (strings.TrimSpace(result.EventsFile) == "" || strings.TrimSpace(result.PaneCaptureFile) == "") {
+		return fmt.Errorf("verifier passed without artifact paths")
+	}
 	if result.Passed && len(result.DistinctSessionSeconds) < 5 {
 		return fmt.Errorf("verifier passed with too few distinct session samples: %d", len(result.DistinctSessionSeconds))
 	}
@@ -145,6 +159,11 @@ func validateResult(result Result, options Options) error {
 		return fmt.Errorf("verifier passed with no recorded events")
 	}
 	return nil
+}
+
+func isExpectedVerificationFailure(runErr error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1
 }
 
 func verifierRunError(runErr error, stderr string) error {

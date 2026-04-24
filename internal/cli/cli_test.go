@@ -751,6 +751,49 @@ func TestRunEnsureLockBusyReturnsOperatorInterventionRequired(t *testing.T) {
 	}
 }
 
+func TestRunEnsureLoadsStateAfterAcquiringLock(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	originalVerifier := verifyCurrentBinary
+	verifyCurrentBinary = func(ctx context.Context, targetBinary string, contractVersion, durationSeconds int) (verifier.Result, error) {
+		t.Fatalf("verifyCurrentBinary should not be called after target changes before locked state load")
+		return verifier.Result{}, nil
+	}
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+
+	replacementPayload := fixturePayloadByID(t, "negative-2.1.85-unrecognized-delay")
+	replacementBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(replacementPayload))
+	originalAcquire := acquireEnsureLock
+	acquireEnsureLock = func(canonicalPath string) (targetlock.ReleaseFunc, error) {
+		if err := os.WriteFile(canonicalPath, replacementBinary, 0o755); err != nil {
+			t.Fatalf("replace target after lock acquisition: %v", err)
+		}
+		return func() error { return nil }, nil
+	}
+	t.Cleanup(func() {
+		acquireEnsureLock = originalAcquire
+	})
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-lock-before-load", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 1 {
+		t.Fatalf("expected patch update required exit 1, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "ensure_reason: unrecognized_shape") {
+		t.Fatalf("expected locked state load to see replacement shape, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, replacementBinary) {
+		t.Fatalf("expected ensure not to overwrite target changed before locked state load")
+	}
+}
+
 func TestRunEnsureVerifierUnavailableRestoresAndReturnsInconclusive(t *testing.T) {
 	tempDir := t.TempDir()
 	setTestStateRoot(t)

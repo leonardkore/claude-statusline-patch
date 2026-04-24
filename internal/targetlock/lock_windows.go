@@ -3,9 +3,12 @@
 package targetlock
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/leonardkore/claude-statusline-patch/internal/backup"
 )
@@ -21,16 +24,33 @@ func Acquire(canonicalPath string) (ReleaseFunc, error) {
 		return nil, fmt.Errorf("create target lock dir: %w", err)
 	}
 	lockPath := filepath.Join(targetDir, "ensure.lock")
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		if os.IsExist(err) {
+		return nil, fmt.Errorf("open ensure lock %s: %w", lockPath, err)
+	}
+	overlapped := &windows.Overlapped{}
+	lockErr := windows.LockFileEx(
+		windows.Handle(file.Fd()),
+		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
+		0,
+		1,
+		0,
+		overlapped,
+	)
+	if lockErr != nil {
+		_ = file.Close()
+		if errors.Is(lockErr, windows.ERROR_LOCK_VIOLATION) {
 			return nil, ErrBusy
 		}
-		return nil, fmt.Errorf("create ensure lock %s: %w", lockPath, err)
+		return nil, fmt.Errorf("acquire ensure lock %s: %w", lockPath, lockErr)
 	}
 	return func() error {
+		unlockErr := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped)
 		closeErr := file.Close()
 		removeErr := os.Remove(lockPath)
+		if unlockErr != nil {
+			return fmt.Errorf("unlock ensure lock %s: %w", lockPath, unlockErr)
+		}
 		if closeErr != nil {
 			return fmt.Errorf("close ensure lock %s: %w", lockPath, closeErr)
 		}

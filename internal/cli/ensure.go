@@ -91,17 +91,21 @@ func runEnsure(args []string) int {
 		return 2
 	}
 
-	state, err := loadEnsureState(*binaryPath)
+	resolved, err := claude.Resolve(*binaryPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return ensureOutcomeLocalError.exitCode()
 	}
 
-	release, err := acquireEnsureLock(state.resolved.CanonicalPath)
+	release, err := acquireEnsureLock(resolved.CanonicalPath)
 	if err != nil {
-		result := baseEnsureResult(state, *intervalMS)
-		result.Outcome = ensureOutcomeOperatorInterventionRequired
-		result.Reason = "lock_busy"
+		result := ensureResult{
+			BinaryPath:     resolved.CanonicalPath,
+			IntervalMS:     *intervalMS,
+			VerifyDuration: *verifySeconds,
+			Outcome:        ensureOutcomeOperatorInterventionRequired,
+			Reason:         "lock_busy",
+		}
 		if !errors.Is(err, targetlock.ErrBusy) {
 			result.Outcome = ensureOutcomeLocalError
 			result.Reason = "lock_error"
@@ -112,6 +116,12 @@ func runEnsure(args []string) int {
 	defer func() {
 		_ = release()
 	}()
+
+	state, err := loadEnsureStateFromResolved(resolved)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return ensureOutcomeLocalError.exitCode()
+	}
 
 	result := baseEnsureResult(state, *intervalMS)
 	result.VerifyDuration = *verifySeconds
@@ -305,6 +315,10 @@ func loadEnsureState(binaryPath string) (*ensureState, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadEnsureStateFromResolved(resolved)
+}
+
+func loadEnsureStateFromResolved(resolved *claude.ResolvedBinary) (*ensureState, error) {
 	data, err := readBoundedFile(resolved.CanonicalPath, maxBinarySizeBytes)
 	if err != nil {
 		return nil, err

@@ -246,6 +246,34 @@ func TestLoadVerifiedOutcomeRequiresExactTupleMatch(t *testing.T) {
 	}
 }
 
+func TestLoadVerifiedOutcomeReportsInvalidRecord(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	canonicalPath := filepath.Join(home, "bin", "claude")
+	path, err := VerifiedOutcomePath(canonicalPath, "patched-sha", 1000, "linux", "amd64", 1)
+	if err != nil {
+		t.Fatalf("VerifiedOutcomePath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"canonical_path":"`+canonicalPath+`"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	record, err := LoadVerifiedOutcome(canonicalPath, "patched-sha", 1000, "linux", "amd64", 1)
+	if err == nil {
+		t.Fatalf("expected invalid verified outcome error")
+	}
+	if record != nil {
+		t.Fatalf("expected no record on invalid verified outcome")
+	}
+	if !strings.Contains(err.Error(), "invalid verified outcome") {
+		t.Fatalf("expected invalid verified outcome diagnostic, got %v", err)
+	}
+}
+
 func TestDeleteVerifiedOutcomesRemovesAllVerifiedRecords(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
