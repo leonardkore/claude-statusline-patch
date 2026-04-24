@@ -15,6 +15,7 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/fileutil"
 	"github.com/leonardkore/claude-statusline-patch/internal/patch"
 	"github.com/leonardkore/claude-statusline-patch/internal/repack"
+	"github.com/leonardkore/claude-statusline-patch/internal/targetlock"
 	"github.com/leonardkore/claude-statusline-patch/internal/version"
 )
 
@@ -65,6 +66,13 @@ func runApply(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	release, err := acquireEnsureLock(resolved.CanonicalPath)
+	if err != nil {
+		return fail(lockError(err))
+	}
+	defer func() {
+		_ = release()
+	}()
 
 	originalBytes, err := readBoundedFile(resolved.CanonicalPath, maxBinarySizeBytes)
 	if err != nil {
@@ -123,7 +131,7 @@ func runApply(args []string) int {
 
 	if err := writeBinaryAtomically(resolved.CanonicalPath, originalHash, patchedBytes, resolved.Mode); err != nil {
 		if repack.TargetMayHaveChanged(err) {
-			return fail(fmt.Errorf("%w\n\nThe target binary may already have been modified after patching.\nA backup of the original binary was preserved at:\n  %s\nUse `claude-statusline-patch restore --binary %s` if the binary still matches the managed patched hash, or restore the backup manually from that path if needed.", err, backupPath, resolved.CanonicalPath))
+			return fail(preservedBackupError(err, backupPath, resolved.CanonicalPath))
 		}
 		if !repack.TargetMayHaveChanged(err) {
 			cleanupBackup()
@@ -291,6 +299,13 @@ func runRestore(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	release, err := acquireEnsureLock(resolved.CanonicalPath)
+	if err != nil {
+		return fail(lockError(err))
+	}
+	defer func() {
+		_ = release()
+	}()
 	currentBytes, err := readBoundedFile(resolved.CanonicalPath, maxBinarySizeBytes)
 	if err != nil {
 		return fail(err)
@@ -309,6 +324,9 @@ func runRestore(args []string) int {
 	}
 
 	if currentHash == managed.OriginalSHA256 {
+		if err := cleanupManagedState(managed); err != nil {
+			return fail(err)
+		}
 		fmt.Printf("already restored: %s\n", resolved.CanonicalPath)
 		return 0
 	}
@@ -337,12 +355,19 @@ func runRestore(args []string) int {
 	if err := writeBinaryAtomically(resolved.CanonicalPath, currentHash, backupBytes, mode); err != nil {
 		return fail(err)
 	}
-	if err := backup.DeleteMetadata(resolved.CanonicalPath, managed.OriginalSHA256); err != nil {
+	if err := cleanupManagedState(managed); err != nil {
 		return fail(err)
 	}
 
 	fmt.Printf("restored: %s from %s\n", resolved.CanonicalPath, backupPath)
 	return 0
+}
+
+func lockError(err error) error {
+	if errors.Is(err, targetlock.ErrBusy) {
+		return errors.New("target binary is busy; another patch transaction holds the per-binary lock")
+	}
+	return fmt.Errorf("acquire target lock: %w", err)
 }
 
 func runApplyDryRun(canonicalPath, originalHash string, originalBytes []byte, bundle *bun.Bundle, graph *bun.ModuleGraph, inspection patch.Inspection, managed *backup.Metadata, intervalMS int) int {

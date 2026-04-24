@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/leonardkore/claude-statusline-patch/internal/backup"
 	"github.com/leonardkore/claude-statusline-patch/internal/bun"
@@ -22,9 +23,15 @@ const ensureVerifierContractVersion = 1
 
 var (
 	acquireEnsureLock   = targetlock.Acquire
-	verifyCurrentBinary = func(ctx context.Context, durationSeconds int) (verifier.Result, error) {
-		return verifier.Verify(ctx, "on", durationSeconds)
+	verifyCurrentBinary = func(ctx context.Context, targetBinary string, contractVersion, durationSeconds int) (verifier.Result, error) {
+		return verifier.VerifyWithOptions(ctx, verifier.Options{
+			Mode:            "on",
+			DurationSeconds: durationSeconds,
+			TargetBinary:    targetBinary,
+			ContractVersion: contractVersion,
+		})
 	}
+	verifyTargetMatchesActive = targetMatchesActiveClaude
 )
 
 type ensureOutcome string
@@ -107,6 +114,7 @@ func runEnsure(args []string) int {
 	}()
 
 	result := baseEnsureResult(state, *intervalMS)
+	result.VerifyDuration = *verifySeconds
 	record, recordErr := loadExactVerifiedOutcome(state, *intervalMS)
 	if recordErr != nil {
 		result.Outcome = ensureOutcomeLocalError
@@ -119,11 +127,7 @@ func runEnsure(args []string) int {
 	managedPatched := state.managed != nil && state.managed.PatchedSHA256 == state.hash
 	exactVerifiedTuple := record != nil && state.inspection.State == patch.StatePatched && managedPatched && state.inspection.IntervalMS == *intervalMS
 	if exactVerifiedTuple {
-		result.Outcome = ensureOutcomeVerifiedSuccess
-		result.Action = "already_verified_exact_tuple"
 		result.VerifiedTuple = true
-		fmt.Print(formatEnsureOutput(result))
-		return result.Outcome.exitCode()
 	}
 
 	switch state.inspection.State {
@@ -162,23 +166,47 @@ func runEnsurePatched(state *ensureState, result ensureResult, intervalMS, verif
 		fmt.Print(formatEnsureOutput(result))
 		return result.Outcome.exitCode()
 	}
+	if err := checkVerifierTarget(state.resolved.CanonicalPath); err != nil {
+		result.Outcome = ensureVerificationOutcome(err)
+		result.Reason = ensureVerificationReason(err)
+		fmt.Print(formatEnsureOutput(result))
+		fmt.Fprintln(os.Stderr, err)
+		return result.Outcome.exitCode()
+	}
 
-	verifyResult, verifyErr := verifyPatchedBinary(verifySeconds)
+	verifyResult, verifyErr := verifyPatchedBinary(state.resolved.CanonicalPath, verifySeconds)
 	if verifyErr != nil {
 		result.Outcome = ensureVerificationOutcome(verifyErr)
-		result.Reason = "verification_unavailable_or_inconclusive"
+		result.Reason = ensureVerificationReason(verifyErr)
+		if restoreErr := restoreResolvedBinary(state.resolved); restoreErr != nil {
+			result.Outcome = ensureOutcomeLocalError
+			result.Reason = "restore_failed_after_existing_patch_verification_error"
+			fmt.Print(formatEnsureOutput(result))
+			fmt.Fprintln(os.Stderr, restoreErr)
+			return result.Outcome.exitCode()
+		}
+		result.Restored = true
 		fmt.Print(formatEnsureOutput(result))
+		fmt.Fprintln(os.Stderr, verifyErr)
 		return result.Outcome.exitCode()
 	}
 	result.VerifyResult = &verifyResult
 	if !verifyResult.Passed {
 		result.Outcome = ensureOutcomePatchUpdateRequired
 		result.Reason = "live_verification_failed_existing_patch"
+		if restoreErr := restoreResolvedBinary(state.resolved); restoreErr != nil {
+			result.Outcome = ensureOutcomeLocalError
+			result.Reason = "restore_failed_after_existing_patch_verification_failure"
+			fmt.Print(formatEnsureOutput(result))
+			fmt.Fprintln(os.Stderr, restoreErr)
+			return result.Outcome.exitCode()
+		}
+		result.Restored = true
 		fmt.Print(formatEnsureOutput(result))
 		return result.Outcome.exitCode()
 	}
 
-	if err := saveVerifiedOutcome(state, intervalMS); err != nil {
+	if err := saveVerifiedOutcome(state, intervalMS, verifyResult); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	result.Outcome = ensureOutcomeVerifiedSuccess
@@ -192,6 +220,13 @@ func runEnsureUnpatched(state *ensureState, result ensureResult, intervalMS, ver
 		result.Outcome = ensureOutcomeVerificationInconclusiveAvailable
 		result.Reason = "live_verification_unsupported_platform"
 		fmt.Print(formatEnsureOutput(result))
+		return result.Outcome.exitCode()
+	}
+	if err := checkVerifierTarget(state.resolved.CanonicalPath); err != nil {
+		result.Outcome = ensureVerificationOutcome(err)
+		result.Reason = ensureVerificationReason(err)
+		fmt.Print(formatEnsureOutput(result))
+		fmt.Fprintln(os.Stderr, err)
 		return result.Outcome.exitCode()
 	}
 
@@ -214,10 +249,10 @@ func runEnsureUnpatched(state *ensureState, result ensureResult, intervalMS, ver
 	}
 	result.Mutated = true
 
-	verifyResult, verifyErr := verifyPatchedBinary(verifySeconds)
+	verifyResult, verifyErr := verifyPatchedBinary(state.resolved.CanonicalPath, verifySeconds)
 	if verifyErr != nil {
 		result.Outcome = ensureVerificationOutcome(verifyErr)
-		result.Reason = "verification_unavailable_or_inconclusive_after_apply"
+		result.Reason = ensureVerificationReason(verifyErr) + "_after_apply"
 		if restoreErr := restoreResolvedBinary(state.resolved); restoreErr != nil {
 			result.Outcome = ensureOutcomeLocalError
 			result.Reason = "restore_failed_after_verification_error"
@@ -227,6 +262,7 @@ func runEnsureUnpatched(state *ensureState, result ensureResult, intervalMS, ver
 		}
 		result.Restored = true
 		fmt.Print(formatEnsureOutput(result))
+		fmt.Fprintln(os.Stderr, verifyErr)
 		return result.Outcome.exitCode()
 	}
 	result.VerifyResult = &verifyResult
@@ -255,7 +291,7 @@ func runEnsureUnpatched(state *ensureState, result ensureResult, intervalMS, ver
 		ObservedVersions: append([]string(nil), state.inspection.ObservedVersions...),
 		IntervalMS:       intervalMS,
 	}
-	if recordErr := saveVerifiedOutcome(state, intervalMS); recordErr != nil {
+	if recordErr := saveVerifiedOutcome(state, intervalMS, verifyResult); recordErr != nil {
 		fmt.Fprintln(os.Stderr, recordErr)
 	}
 	result.Outcome = ensureOutcomeVerifiedSuccess
@@ -323,6 +359,9 @@ func applyPatchedBinary(state *ensureState, patchedBytes []byte, intervalMS int)
 		if !repack.TargetMayHaveChanged(err) {
 			cleanupBackup()
 		}
+		if repack.TargetMayHaveChanged(err) {
+			return "", preservedBackupError(err, backupPath, state.resolved.CanonicalPath)
+		}
 		return "", err
 	}
 
@@ -360,6 +399,12 @@ func restoreResolvedBinary(resolved *claude.ResolvedBinary) error {
 		return errors.New("no managed backup record found for this binary")
 	}
 	if currentHash != managed.PatchedSHA256 {
+		if currentHash == managed.OriginalSHA256 {
+			if err := cleanupManagedState(managed); err != nil {
+				return err
+			}
+			return nil
+		}
 		return errors.New("binary no longer matches the managed patched hash; refusing restore")
 	}
 
@@ -382,7 +427,7 @@ func restoreResolvedBinary(resolved *claude.ResolvedBinary) error {
 	if err := writeBinaryAtomically(resolved.CanonicalPath, currentHash, backupBytes, mode); err != nil {
 		return err
 	}
-	return backup.DeleteMetadata(resolved.CanonicalPath, managed.OriginalSHA256)
+	return cleanupManagedState(managed)
 }
 
 func loadExactVerifiedOutcome(state *ensureState, intervalMS int) (*backup.VerifiedOutcome, error) {
@@ -396,7 +441,7 @@ func loadExactVerifiedOutcome(state *ensureState, intervalMS int) (*backup.Verif
 	)
 }
 
-func saveVerifiedOutcome(state *ensureState, intervalMS int) error {
+func saveVerifiedOutcome(state *ensureState, intervalMS int, verifyResult verifier.Result) error {
 	return backup.SaveVerifiedOutcome(backup.VerifiedOutcome{
 		CanonicalPath:           state.resolved.CanonicalPath,
 		InstalledSHA256:         state.hash,
@@ -405,11 +450,32 @@ func saveVerifiedOutcome(state *ensureState, intervalMS int) error {
 		PlatformGOARCH:          runtime.GOARCH,
 		VerifierContractVersion: ensureVerifierContractVersion,
 		DetectedVersion:         state.inspection.Version,
+		VerifierRunID:           verifyResult.RunID,
+		EventsFile:              verifyResult.EventsFile,
+		PaneCaptureFile:         verifyResult.PaneCaptureFile,
+		DistinctSessionSeconds:  append([]int(nil), verifyResult.DistinctSessionSeconds...),
 	})
 }
 
-func verifyPatchedBinary(verifySeconds int) (verifier.Result, error) {
-	return verifyCurrentBinary(context.Background(), verifySeconds)
+func verifyPatchedBinary(canonicalPath string, verifySeconds int) (verifier.Result, error) {
+	if err := checkVerifierTarget(canonicalPath); err != nil {
+		return verifier.Result{}, err
+	}
+	timeout := time.Duration(verifySeconds+30) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return verifyCurrentBinary(ctx, canonicalPath, ensureVerifierContractVersion, verifySeconds)
+}
+
+func checkVerifierTarget(canonicalPath string) error {
+	matches, err := verifyTargetMatchesActive(canonicalPath)
+	if err != nil {
+		return err
+	}
+	if !matches {
+		return verifier.ErrTargetMismatch
+	}
+	return nil
 }
 
 func canLiveVerifyCurrentPlatform() bool {
@@ -420,7 +486,45 @@ func ensureVerificationOutcome(err error) ensureOutcome {
 	if errors.Is(err, verifier.ErrUnavailable) {
 		return ensureOutcomeVerificationInconclusiveAvailable
 	}
+	if errors.Is(err, verifier.ErrTargetMismatch) {
+		return ensureOutcomeOperatorInterventionRequired
+	}
 	return ensureOutcomeVerificationInconclusiveAvailable
+}
+
+func ensureVerificationReason(err error) string {
+	switch {
+	case errors.Is(err, verifier.ErrUnavailable):
+		return "verifier_unavailable"
+	case errors.Is(err, verifier.ErrTargetMismatch):
+		return "verifier_target_mismatch"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "verifier_timeout"
+	default:
+		return "verifier_error"
+	}
+}
+
+func targetMatchesActiveClaude(canonicalPath string) (bool, error) {
+	active, err := claude.Resolve("")
+	if err != nil {
+		return false, err
+	}
+	return active.CanonicalPath == canonicalPath, nil
+}
+
+func cleanupManagedState(managed *backup.Metadata) error {
+	if err := backup.DeleteVerifiedOutcomes(managed.CanonicalPath); err != nil {
+		return err
+	}
+	if err := backup.DeleteMetadata(managed.CanonicalPath, managed.OriginalSHA256); err != nil {
+		return err
+	}
+	return backup.DeleteBackup(managed.CanonicalPath, managed.OriginalSHA256)
+}
+
+func preservedBackupError(err error, backupPath, canonicalPath string) error {
+	return fmt.Errorf("%w\n\nThe target binary may already have been modified after patching.\nA backup of the original binary was preserved at:\n  %s\nUse `claude-statusline-patch restore --binary %s` if the binary still matches the managed patched hash, or restore the backup manually from that path if needed.", err, backupPath, canonicalPath)
 }
 
 func formatEnsureOutput(result ensureResult) string {

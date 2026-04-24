@@ -43,6 +43,27 @@ func TestWriteAtomicallyRejectsHashMismatch(t *testing.T) {
 	}
 }
 
+func TestWriteAtomicallyRejectsSymlinkTarget(t *testing.T) {
+	dir := t.TempDir()
+	realPath := filepath.Join(dir, "real-claude")
+	targetPath := filepath.Join(dir, "claude")
+	original := []byte("original")
+	if err := os.WriteFile(realPath, original, 0o755); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	if err := os.Symlink(realPath, targetPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	err := WriteAtomically(targetPath, backup.SHA256Bytes(original), []byte("replacement"), 0o755)
+	if err == nil {
+		t.Fatalf("expected symlink target to be rejected")
+	}
+	if TargetMayHaveChanged(err) {
+		t.Fatalf("expected symlink rejection before commit")
+	}
+}
+
 func TestWriteAtomicallyRevalidatesTargetBeforeSwap(t *testing.T) {
 	dir := t.TempDir()
 	targetPath := filepath.Join(dir, "claude")

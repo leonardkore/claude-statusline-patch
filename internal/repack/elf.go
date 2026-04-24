@@ -49,6 +49,9 @@ var (
 )
 
 func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode os.FileMode) error {
+	if err := validateTargetPath(targetPath); err != nil {
+		return &AtomicWriteError{stage: writeStagePreCommit, err: err}
+	}
 	currentHash, err := sha256File(targetPath)
 	if err != nil {
 		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("hash current target: %w", err)}
@@ -89,6 +92,9 @@ func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode o
 	if err := syncDir(dir); err != nil {
 		return &AtomicWriteError{stage: writeStagePreCommit, err: err}
 	}
+	if err := validateTargetPath(targetPath); err != nil {
+		return &AtomicWriteError{stage: writeStagePreCommit, err: err}
+	}
 	currentHash, err = sha256File(targetPath)
 	if err != nil {
 		return &AtomicWriteError{stage: writeStagePreCommit, err: fmt.Errorf("re-hash current target before swap: %w", err)}
@@ -102,6 +108,20 @@ func WriteAtomically(targetPath, expectedCurrentHash string, data []byte, mode o
 	committed = true
 	if err := syncDir(dir); err != nil {
 		return &AtomicWriteError{stage: writeStagePostCommit, err: err}
+	}
+	return nil
+}
+
+func validateTargetPath(targetPath string) error {
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		return fmt.Errorf("lstat target: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("target changed to symlink: %s", targetPath)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("target is not a regular file: %s", targetPath)
 	}
 	return nil
 }

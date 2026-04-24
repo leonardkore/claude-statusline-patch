@@ -202,6 +202,10 @@ func TestLoadVerifiedOutcomeRequiresExactTupleMatch(t *testing.T) {
 		PlatformGOARCH:          "amd64",
 		VerifierContractVersion: 1,
 		DetectedVersion:         "2.1.97",
+		VerifierRunID:           "run-1",
+		EventsFile:              "events.jsonl",
+		PaneCaptureFile:         "pane.txt",
+		DistinctSessionSeconds:  []int{0, 1, 2, 3, 4},
 	}
 	if err := SaveVerifiedOutcome(record); err != nil {
 		t.Fatalf("SaveVerifiedOutcome failed: %v", err)
@@ -239,5 +243,43 @@ func TestLoadVerifiedOutcomeRequiresExactTupleMatch(t *testing.T) {
 				t.Fatalf("expected no verified outcome for mismatch case %s", tc.name)
 			}
 		})
+	}
+}
+
+func TestDeleteVerifiedOutcomesRemovesAllVerifiedRecords(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	canonicalPath := filepath.Join(home, "bin", "claude")
+	base := VerifiedOutcome{
+		CanonicalPath:           canonicalPath,
+		InstalledSHA256:         "patched-sha",
+		IntervalMS:              1000,
+		PlatformGOOS:            "linux",
+		PlatformGOARCH:          "amd64",
+		VerifierContractVersion: 1,
+		DetectedVersion:         "2.1.97",
+		VerifierRunID:           "run-1",
+		EventsFile:              "events.jsonl",
+		PaneCaptureFile:         "pane.txt",
+		DistinctSessionSeconds:  []int{0, 1, 2, 3, 4},
+	}
+	if err := SaveVerifiedOutcome(base); err != nil {
+		t.Fatalf("SaveVerifiedOutcome failed: %v", err)
+	}
+	base.InstalledSHA256 = "other-patched-sha"
+	base.VerifierRunID = "run-2"
+	if err := SaveVerifiedOutcome(base); err != nil {
+		t.Fatalf("SaveVerifiedOutcome second failed: %v", err)
+	}
+	if err := DeleteVerifiedOutcomes(canonicalPath); err != nil {
+		t.Fatalf("DeleteVerifiedOutcomes failed: %v", err)
+	}
+	records, err := LoadAllVerifiedOutcomes(canonicalPath)
+	if err != nil {
+		t.Fatalf("LoadAllVerifiedOutcomes failed: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("expected no verified outcomes after delete, got %d", len(records))
 	}
 }

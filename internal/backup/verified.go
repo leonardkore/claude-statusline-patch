@@ -22,6 +22,10 @@ type VerifiedOutcome struct {
 	PlatformGOARCH          string `json:"platform_goarch"`
 	VerifierContractVersion int    `json:"verifier_contract_version"`
 	DetectedVersion         string `json:"detected_version"`
+	VerifierRunID           string `json:"verifier_run_id"`
+	EventsFile              string `json:"events_file"`
+	PaneCaptureFile         string `json:"pane_capture_file"`
+	DistinctSessionSeconds  []int  `json:"distinct_session_seconds"`
 	VerifiedAt              string `json:"verified_at"`
 }
 
@@ -96,7 +100,15 @@ func LoadVerifiedOutcome(canonicalPath, installedHash string, intervalMS int, go
 		return nil, fmt.Errorf("parse verified outcome %s: %w", path, err)
 	}
 	if err := validateVerifiedOutcome(record); err != nil {
-		return nil, err
+		return nil, nil
+	}
+	if record.CanonicalPath != canonicalPath ||
+		record.InstalledSHA256 != installedHash ||
+		record.IntervalMS != intervalMS ||
+		record.PlatformGOOS != goos ||
+		record.PlatformGOARCH != goarch ||
+		record.VerifierContractVersion != verifierContractVersion {
+		return nil, nil
 	}
 	return &record, nil
 }
@@ -138,6 +150,30 @@ func LoadAllVerifiedOutcomes(canonicalPath string) ([]VerifiedOutcome, error) {
 	return records, nil
 }
 
+func DeleteVerifiedOutcomes(canonicalPath string) error {
+	targetDir, err := TargetDir(canonicalPath)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read verified outcomes dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "verified-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(targetDir, entry.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove verified outcome %s: %w", path, err)
+		}
+	}
+	return syncDir(targetDir)
+}
+
 func validateVerifiedOutcome(record VerifiedOutcome) error {
 	if record.SchemaVersion != 0 && record.SchemaVersion != verifiedSchemaVersion {
 		return fmt.Errorf("unsupported verified outcome schema version %d", record.SchemaVersion)
@@ -160,6 +196,15 @@ func validateVerifiedOutcome(record VerifiedOutcome) error {
 	}
 	if record.VerifierContractVersion <= 0 {
 		return fmt.Errorf("verified outcome verifier contract version must be positive")
+	}
+	if strings.TrimSpace(record.VerifierRunID) == "" {
+		return fmt.Errorf("verified outcome verifier run id is required")
+	}
+	if strings.TrimSpace(record.EventsFile) == "" || strings.TrimSpace(record.PaneCaptureFile) == "" {
+		return fmt.Errorf("verified outcome verifier artifacts are required")
+	}
+	if len(record.DistinctSessionSeconds) < 5 {
+		return fmt.Errorf("verified outcome requires at least five distinct session samples")
 	}
 	return nil
 }
