@@ -17,6 +17,7 @@ const (
 	ShapeIDStatuslineDebounceV1 = "statusline_debounce_v1"
 	ShapeIDStatuslineDebounceV2 = "statusline_debounce_v2"
 	ShapeIDStatuslineDebounceV3 = "statusline_debounce_v3"
+	ShapeIDStatuslineDebounceV4 = "statusline_debounce_v4"
 )
 
 type State string
@@ -98,8 +99,8 @@ type scanResult struct {
 
 var (
 	identifierPattern      = `[A-Za-z_$][A-Za-z0-9_$]*`
-	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3()}
-	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}}
+	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3(), newStatuslineDebounceV4()}
+	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}}
 )
 
 func Inspect(payload []byte) Inspection {
@@ -355,6 +356,12 @@ func validateUnpatchedMatchV3(payload []byte, match regexMatch) bool {
 		equalAllBytes(payload, match, "thinking", "thinkingAssign", "thinkingDep")
 }
 
+func validateUnpatchedMatchV4(payload []byte, match regexMatch) bool {
+	return validateUnpatchedMatchV3(payload, match) &&
+		equalAllBytes(payload, match, "state", "stateToken", "statePerm", "stateVim", "stateModel", "stateFast", "stateEffort", "stateThinking", "stateTokenAssign", "statePermAssign", "stateVimAssign", "stateModelAssign", "stateFastAssign", "stateEffortAssign", "stateThinkingAssign") &&
+		equalAllBytes(payload, match, "token", "tokenAssign", "tokenDep")
+}
+
 func validatePatchedMatchV3(payload []byte, match regexMatch) bool {
 	return validatePatchedMatchV2(payload, match) &&
 		equalAllBytes(payload, match, "refresh", "refreshImmediate") &&
@@ -362,6 +369,12 @@ func validatePatchedMatchV3(payload []byte, match regexMatch) bool {
 		equalAllBytes(payload, match, "fast", "fastAssign", "fastDep") &&
 		equalAllBytes(payload, match, "effort", "effortAssign", "effortDep") &&
 		equalAllBytes(payload, match, "thinking", "thinkingAssign", "thinkingDep")
+}
+
+func validatePatchedMatchV4(payload []byte, match regexMatch) bool {
+	return validatePatchedMatchV3(payload, match) &&
+		equalAllBytes(payload, match, "state", "stateToken", "statePerm", "stateVim", "stateModel", "stateFast", "stateEffort", "stateThinking", "stateTokenAssign", "statePermAssign", "stateVimAssign", "stateModelAssign", "stateFastAssign", "stateEffortAssign", "stateThinkingAssign") &&
+		equalAllBytes(payload, match, "token", "tokenAssign", "tokenDep")
 }
 
 func equalAllBytes(payload []byte, match regexMatch, names ...string) bool {
@@ -491,6 +504,27 @@ func newStatuslineDebounceV3() shapeFamily {
 	}
 }
 
+func newStatuslineDebounceV4() shapeFamily {
+	id := identifierPattern
+	unpatchedPattern := fmt.Sprintf(
+		`,(?P<callback>%[1]s)=(?P<hooks>%[1]s)\.useCallback\(\(\)=>\{if\((?P<timer>%[1]s)\.current!==void 0\)clearTimeout\((?P<timerClear>%[1]s)\.current\);(?P<timerSet>%[1]s)\.current=setTimeout\(\((?P<clearArg>%[1]s),(?P<invoke>%[1]s)\)=>\{(?P<clearArgRepeat>%[1]s)\.current=void 0,(?P<invokeRepeat>%[1]s)\(\)\},300,(?P<timerArg>%[1]s),(?P<refresh>%[1]s)\)\},\[(?P<refreshDep>%[1]s)\]\);(?P<hooksEffect>%[1]s)\.useEffect\(\(\)=>\{if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|(?P<token>%[1]s)!==(?P<stateToken>%[1]s)\.current\.tokenUsage\|\|(?P<permission>%[1]s)!==(?P<statePerm>%[1]s)\.current\.permissionMode\|\|(?P<vim>%[1]s)!==(?P<stateVim>%[1]s)\.current\.vimMode\|\|(?P<model>%[1]s)!==(?P<stateModel>%[1]s)\.current\.mainLoopModel\|\|(?P<fast>%[1]s)!==(?P<stateFast>%[1]s)\.current\.fastMode\|\|(?P<effort>%[1]s)!==(?P<stateEffort>%[1]s)\.current\.effortValue\|\|(?P<thinking>%[1]s)!==(?P<stateThinking>%[1]s)\.current\.thinkingEnabled\)(?P<stateTokenAssign>%[1]s)\.current\.tokenUsage=(?P<tokenAssign>%[1]s),(?P<statePermAssign>%[1]s)\.current\.permissionMode=(?P<permissionAssign>%[1]s),(?P<stateVimAssign>%[1]s)\.current\.vimMode=(?P<vimAssign>%[1]s),(?P<stateModelAssign>%[1]s)\.current\.mainLoopModel=(?P<modelAssign>%[1]s),(?P<stateFastAssign>%[1]s)\.current\.fastMode=(?P<fastAssign>%[1]s),(?P<stateEffortAssign>%[1]s)\.current\.effortValue=(?P<effortAssign>%[1]s),(?P<stateThinkingAssign>%[1]s)\.current\.thinkingEnabled=(?P<thinkingAssign>%[1]s),(?P<callbackInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<tokenDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<modelDep>%[1]s),(?P<fastDep>%[1]s),(?P<effortDep>%[1]s),(?P<thinkingDep>%[1]s),(?P<callbackDep>%[1]s)\]\);`,
+		id,
+	)
+	patchedPattern := fmt.Sprintf(
+		`,(?P<effectVar>%[1]s)=(?P<hooks>%[1]s)\.useEffect\(\(\)=>\{(?P<refreshImmediate>%[1]s)\(\);const (?P<intervalVar>%[1]s)=setInterval\(\(\)=>(?P<refresh>%[1]s)\(\),(?P<interval>[1-9][0-9]*)\);return\(\)=>clearInterval\((?P<intervalVarClear>%[1]s)\);\},\[(?P<refreshDep>%[1]s)\]\),(?P<callback>%[1]s)=(?P<hooksCallback>%[1]s)\.useCallback\(\(\)=>\{\},\[\]\);(?P<hooksEffect>%[1]s)\.useEffect\(\(\)=>\{if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|(?P<token>%[1]s)!==(?P<stateToken>%[1]s)\.current\.tokenUsage\|\|(?P<permission>%[1]s)!==(?P<statePerm>%[1]s)\.current\.permissionMode\|\|(?P<vim>%[1]s)!==(?P<stateVim>%[1]s)\.current\.vimMode\|\|(?P<model>%[1]s)!==(?P<stateModel>%[1]s)\.current\.mainLoopModel\|\|(?P<fast>%[1]s)!==(?P<stateFast>%[1]s)\.current\.fastMode\|\|(?P<effort>%[1]s)!==(?P<stateEffort>%[1]s)\.current\.effortValue\|\|(?P<thinking>%[1]s)!==(?P<stateThinking>%[1]s)\.current\.thinkingEnabled\)(?P<stateTokenAssign>%[1]s)\.current\.tokenUsage=(?P<tokenAssign>%[1]s),(?P<statePermAssign>%[1]s)\.current\.permissionMode=(?P<permissionAssign>%[1]s),(?P<stateVimAssign>%[1]s)\.current\.vimMode=(?P<vimAssign>%[1]s),(?P<stateModelAssign>%[1]s)\.current\.mainLoopModel=(?P<modelAssign>%[1]s),(?P<stateFastAssign>%[1]s)\.current\.fastMode=(?P<fastAssign>%[1]s),(?P<stateEffortAssign>%[1]s)\.current\.effortValue=(?P<effortAssign>%[1]s),(?P<stateThinkingAssign>%[1]s)\.current\.thinkingEnabled=(?P<thinkingAssign>%[1]s),(?P<callbackInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<tokenDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<modelDep>%[1]s),(?P<fastDep>%[1]s),(?P<effortDep>%[1]s),(?P<thinkingDep>%[1]s),(?P<callbackDep>%[1]s)\]\);`,
+		id,
+	)
+	return shapeFamily{
+		id:                ShapeIDStatuslineDebounceV4,
+		observedVersions:  []string{"2.1.128"},
+		unpatched:         compilePattern(unpatchedPattern),
+		patched:           compilePattern(patchedPattern),
+		validateUnpatched: validateUnpatchedMatchV4,
+		validatePatched:   validatePatchedMatchV4,
+		buildReplacement:  buildPatchedBytesV4,
+	}
+}
+
 func observedVersionsForShape(shapeID string) []string {
 	for _, family := range shapeFamilies {
 		if family.id == shapeID {
@@ -555,6 +589,27 @@ func buildPatchedBytesV3(payload []byte, match shapeMatch, intervalMS int) ([]by
 		match.match.string(payload, "state"),
 		[]trackedField{
 			{value: match.match.string(payload, "message"), property: "messageId", assign: false},
+			{value: match.match.string(payload, "permission"), property: "permissionMode", assign: true},
+			{value: match.match.string(payload, "vim"), property: "vimMode", assign: true},
+			{value: match.match.string(payload, "model"), property: "mainLoopModel", assign: true},
+			{value: match.match.string(payload, "fast"), property: "fastMode", assign: true},
+			{value: match.match.string(payload, "effort"), property: "effortValue", assign: true},
+			{value: match.match.string(payload, "thinking"), property: "thinkingEnabled", assign: true},
+		},
+		intervalMS,
+		true,
+	), nil
+}
+
+func buildPatchedBytesV4(payload []byte, match shapeMatch, intervalMS int) ([]byte, error) {
+	return buildPatchedReplacement(
+		match.match.string(payload, "hooks"),
+		match.match.string(payload, "refresh"),
+		match.match.string(payload, "callback"),
+		match.match.string(payload, "state"),
+		[]trackedField{
+			{value: match.match.string(payload, "message"), property: "messageId", assign: false},
+			{value: match.match.string(payload, "token"), property: "tokenUsage", assign: true},
 			{value: match.match.string(payload, "permission"), property: "permissionMode", assign: true},
 			{value: match.match.string(payload, "vim"), property: "vimMode", assign: true},
 			{value: match.match.string(payload, "model"), property: "mainLoopModel", assign: true},
