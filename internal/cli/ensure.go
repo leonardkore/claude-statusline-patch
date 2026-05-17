@@ -19,7 +19,10 @@ import (
 	"github.com/leonardkore/claude-statusline-patch/internal/verifier"
 )
 
-const ensureVerifierContractVersion = 1
+const (
+	ensureVerifierContractVersion = 1
+	ensureVerificationAttempts    = 2
+)
 
 var (
 	acquireEnsureLock   = targetlock.Acquire
@@ -184,7 +187,7 @@ func runEnsurePatched(state *ensureState, result ensureResult, intervalMS, verif
 		return result.Outcome.exitCode()
 	}
 
-	verifyResult, verifyErr := verifyPatchedBinary(state.resolved.CanonicalPath, verifySeconds)
+	verifyResult, verifyErr := verifyPatchedBinaryWithRetry(state.resolved.CanonicalPath, verifySeconds)
 	if verifyErr != nil {
 		result.Outcome = ensureVerificationOutcome(verifyErr)
 		result.Reason = ensureVerificationReason(verifyErr)
@@ -259,7 +262,7 @@ func runEnsureUnpatched(state *ensureState, result ensureResult, intervalMS, ver
 	}
 	result.Mutated = true
 
-	verifyResult, verifyErr := verifyPatchedBinary(state.resolved.CanonicalPath, verifySeconds)
+	verifyResult, verifyErr := verifyPatchedBinaryWithRetry(state.resolved.CanonicalPath, verifySeconds)
 	if verifyErr != nil {
 		result.Outcome = ensureVerificationOutcome(verifyErr)
 		result.Reason = ensureVerificationReason(verifyErr) + "_after_apply"
@@ -479,6 +482,23 @@ func verifyPatchedBinary(canonicalPath string, verifySeconds int) (verifier.Resu
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return verifyCurrentBinary(ctx, canonicalPath, ensureVerifierContractVersion, verifySeconds)
+}
+
+func verifyPatchedBinaryWithRetry(canonicalPath string, verifySeconds int) (verifier.Result, error) {
+	var lastResult verifier.Result
+	var lastErr error
+	for attempt := 0; attempt < ensureVerificationAttempts; attempt++ {
+		result, err := verifyPatchedBinary(canonicalPath, verifySeconds)
+		if err == nil && result.Passed {
+			return result, nil
+		}
+		lastResult = result
+		lastErr = err
+		if errors.Is(err, verifier.ErrUnavailable) || errors.Is(err, verifier.ErrTargetMismatch) {
+			return result, err
+		}
+	}
+	return lastResult, lastErr
 }
 
 func checkVerifierTarget(canonicalPath string) error {

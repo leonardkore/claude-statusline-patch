@@ -615,6 +615,59 @@ func TestRunEnsureVerificationFailureRestoresMutatedBinary(t *testing.T) {
 	}
 }
 
+func TestRunEnsureTransientVerificationFailureRetriesBeforeRestore(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	attempts := 0
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, targetBinary string, contractVersion, durationSeconds int) (verifier.Result, error) {
+		attempts++
+		if attempts == 1 {
+			return verifier.Result{
+				Mode:                   "on",
+				DurationSeconds:        durationSeconds,
+				DistinctSessionSeconds: []int{0, 2, 3, 4, 5, 6},
+				Passed:                 false,
+			}, nil
+		}
+		return successfulVerifierResult(durationSeconds, contractVersion), nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-transient-restore", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected ensure success after retry, got exit %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected two verifier attempts, got %d", attempts)
+	}
+	for _, fragment := range []string{
+		"ensure_outcome: verified_success",
+		"ensure_action: applied_and_verified",
+		"mutated_this_run: true",
+		"restored_this_run: false",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	_, _, inspection, err := inspectBinary(mustReadFile(t, binaryPath))
+	if err != nil {
+		t.Fatalf("inspectBinary failed: %v", err)
+	}
+	if inspection.State != patch.StatePatched || inspection.IntervalMS != 1000 {
+		t.Fatalf("expected binary to remain patched after retry success, got %+v", inspection)
+	}
+}
+
 func TestRunEnsureManagedPatchedUnverifiedRerunVerifiesExistingPatch(t *testing.T) {
 	tempDir := t.TempDir()
 	setTestStateRoot(t)
@@ -954,6 +1007,80 @@ func TestRunEnsureManagedPatchedUnverifiedFailureRestores(t *testing.T) {
 	}
 	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, originalBinary) {
 		t.Fatalf("expected original binary to be restored")
+	}
+}
+
+func TestRunEnsureManagedPatchedTransientVerificationFailureRetriesBeforeRestore(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	attempts := 0
+	originalVerifier := verifyCurrentBinary
+	verifyCurrentBinary = func(ctx context.Context, targetBinary string, contractVersion, durationSeconds int) (verifier.Result, error) {
+		attempts++
+		if attempts == 1 {
+			return verifier.Result{
+				Mode:                   "on",
+				DurationSeconds:        durationSeconds,
+				DistinctSessionSeconds: []int{0, 2, 3, 4, 5, 6},
+				Passed:                 false,
+			}, nil
+		}
+		return successfulVerifierResult(durationSeconds, contractVersion), nil
+	}
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	originalBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(originalPayload))
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	patchedBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(patchedPayload))
+
+	binaryPath := filepath.Join(tempDir, "ensure-rerun-transient")
+	if err := os.WriteFile(binaryPath, patchedBinary, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	originalHash := backup.SHA256Bytes(originalBinary)
+	patchedHash := backup.SHA256Bytes(patchedBinary)
+	backupPath, _, err := backup.EnsureBackup(binaryPath, originalHash, originalBinary)
+	if err != nil {
+		t.Fatalf("EnsureBackup failed: %v", err)
+	}
+	if err := backup.SaveMetadata(backup.Metadata{
+		CanonicalPath:   binaryPath,
+		DisplayPath:     binaryPath,
+		DetectedVersion: "2.1.85",
+		OriginalSHA256:  originalHash,
+		PatchedSHA256:   patchedHash,
+		IntervalMS:      1000,
+		BackupPath:      backupPath,
+		FileMode:        0o755,
+	}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected verify-existing-patch success after retry, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected two verifier attempts, got %d", attempts)
+	}
+	if !strings.Contains(stdout, "ensure_action: verified_existing_patch") {
+		t.Fatalf("expected verified existing patch action, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "restored_this_run: false") {
+		t.Fatalf("expected retry success not to restore, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, patchedBinary) {
+		t.Fatalf("expected patched binary to remain in place")
 	}
 }
 
