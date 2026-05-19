@@ -30,8 +30,8 @@ jobs:
             goarch: amd64
             archive: zip
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-version-file: go.mod
       - name: build archive
@@ -62,7 +62,7 @@ jobs:
           else
             (cd dist && zip -rq "$(basename "$out_dir").zip" "$(basename "$out_dir")")
           fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -75,7 +75,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
       - name: verify tag is on main
@@ -90,7 +90,7 @@ jobs:
             exit 1
           fi
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           path: dist
           merge-multiple: true
@@ -121,7 +121,7 @@ jobs:
           body: |
             Changelog: this release updates the shape-gated Claude statusline patch CLI for the current live-verified support matrix and retries live verification once before restoring a managed patch.
 
-            Supported Claude versions verified: 2.1.84, 2.1.85, 2.1.86, 2.1.87, 2.1.89, 2.1.90, 2.1.91, 2.1.92, 2.1.94, 2.1.97, 2.1.100, 2.1.128, 2.1.143
+            Supported Claude versions verified: 2.1.84, 2.1.85, 2.1.86, 2.1.87, 2.1.89, 2.1.90, 2.1.91, 2.1.92, 2.1.94, 2.1.97, 2.1.100, 2.1.128, 2.1.143, 2.1.144
             Supported OS live-verified: Linux
             Supported binary targets: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64, windows-amd64
             Assets attached: platform binaries plus SHA256SUMS.txt
@@ -129,4 +129,4 @@ jobs:
             Install:
             go install github.com/leonardkore/claude-statusline-patch@${{ github.ref_name }}
 
-            Warning: only Linux + Claude 2.1.84, 2.1.85, 2.1.86, 2.1.87, 2.1.89, 2.1.90, 2.1.91, 2.1.92, 2.1.94, 2.1.97, 2.1.100, 2.1.128, 2.1.143 are live-verified unless more testing was actually done.
+            Warning: only Linux + Claude 2.1.84, 2.1.85, 2.1.86, 2.1.87, 2.1.89, 2.1.90, 2.1.91, 2.1.92, 2.1.94, 2.1.97, 2.1.100, 2.1.128, 2.1.143, 2.1.144 are live-verified unless more testing was actually done.

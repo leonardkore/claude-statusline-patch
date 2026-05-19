@@ -134,12 +134,6 @@ func validateResult(result Result, options Options) error {
 	if result.DurationSeconds < options.DurationSeconds {
 		return fmt.Errorf("verifier result duration too short: expected at least %d, got %d", options.DurationSeconds, result.DurationSeconds)
 	}
-	if options.TargetBinary != "" && result.TargetBinary != options.TargetBinary {
-		return fmt.Errorf("verifier result target mismatch: expected %q, got %q", options.TargetBinary, result.TargetBinary)
-	}
-	if options.ContractVersion > 0 && result.VerifierContractVersion != options.ContractVersion {
-		return fmt.Errorf("verifier contract mismatch: expected %d, got %d", options.ContractVersion, result.VerifierContractVersion)
-	}
 	if result.Passed && strings.TrimSpace(result.TargetBinary) == "" {
 		return fmt.Errorf("verifier passed with empty target binary")
 	}
@@ -157,6 +151,12 @@ func validateResult(result Result, options Options) error {
 	}
 	if result.Passed && result.EventCount <= 0 {
 		return fmt.Errorf("verifier passed with no recorded events")
+	}
+	if options.TargetBinary != "" && result.TargetBinary != options.TargetBinary {
+		return fmt.Errorf("verifier result target mismatch: expected %q, got %q", options.TargetBinary, result.TargetBinary)
+	}
+	if options.ContractVersion > 0 && result.VerifierContractVersion != options.ContractVersion {
+		return fmt.Errorf("verifier contract mismatch: expected %d, got %d", options.ContractVersion, result.VerifierContractVersion)
 	}
 	return nil
 }

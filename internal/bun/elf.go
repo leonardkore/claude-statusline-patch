@@ -306,6 +306,10 @@ func (g *ModuleGraph) ReplaceModuleContents(index int, newContents []byte) ([]by
 }
 
 func ReplacePayload(data []byte, meta Metadata, newPayload []byte) ([]byte, error) {
+	return ReplacePayloadInto(nil, data, meta, newPayload)
+}
+
+func ReplacePayloadInto(dst, data []byte, meta Metadata, newPayload []byte) ([]byte, error) {
 	start := int(meta.PayloadOffset)
 	end := start + meta.PayloadSize
 	if start < 0 || end > len(data) {
@@ -317,7 +321,7 @@ func ReplacePayload(data []byte, meta Metadata, newPayload []byte) ([]byte, erro
 		if len(newPayload) > meta.PayloadCapacity {
 			return nil, fmt.Errorf("replacement payload length %d exceeds payload capacity %d", len(newPayload), meta.PayloadCapacity)
 		}
-		out := append([]byte(nil), data...)
+		out := append(dst[:0], data...)
 		copy(out[start:start+len(newPayload)], newPayload)
 		for i := start + len(newPayload); i < start+meta.PayloadCapacity; i++ {
 			out[i] = 0
@@ -328,7 +332,10 @@ func ReplacePayload(data []byte, meta Metadata, newPayload []byte) ([]byte, erro
 		suffixStart := start + meta.PayloadSize
 		prefix := data[:start]
 		suffix := data[suffixStart:]
-		out := make([]byte, 0, len(prefix)+len(newPayload)+len(suffix))
+		out := dst[:0]
+		if cap(out) < len(prefix)+len(newPayload)+len(suffix) {
+			out = make([]byte, 0, len(prefix)+len(newPayload)+len(suffix))
+		}
 		out = append(out, prefix...)
 		out = append(out, newPayload...)
 		out = append(out, suffix...)

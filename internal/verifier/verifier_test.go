@@ -94,6 +94,18 @@ func TestVerifyRejectsPassedResultMissingRequiredContractFields(t *testing.T) {
 	}
 }
 
+func TestVerifyReportsInvalidPassedEnvelopeBeforeCallerMismatch(t *testing.T) {
+	withVerifierHelper(t, `{"mode":"on","target_binary":"/other","duration_seconds":8,"verifier_contract_version":1,"event_count":5,"distinct_session_seconds":[0,1,2,3,4],"passed":true}`, 0)
+
+	_, err := VerifyWithOptions(context.Background(), Options{Mode: "on", DurationSeconds: 8, TargetBinary: "/target", ContractVersion: 1})
+	if err == nil {
+		t.Fatalf("expected invalid passed verifier result to be rejected")
+	}
+	if !strings.Contains(err.Error(), "empty run id") {
+		t.Fatalf("expected passed-envelope contract error before target mismatch, got %v", err)
+	}
+}
+
 func withVerifierHelper(t *testing.T, stdout string, exitCode int) {
 	t.Helper()
 

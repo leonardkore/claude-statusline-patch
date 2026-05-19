@@ -177,4 +177,4 @@ Phase 1 support claims are intentionally strict:
 | Linux `x86_64` | `2.1.144` | `statusline_debounce_v5` | yes | yes | `v0.2.10` | live-verified native refreshInterval shape with renamed debounce helper; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | future version with known family | `statusline_debounce_v1` or later | maybe | no, until live-verified | UNKNOWN | use `check` then `apply --dry-run` before changing code |
 
-See [docs/verification.md](docs/verification.md) for the exact local verification sequence and [docs/releasing.md](docs/releasing.md) for release rules and asset expectations.
+See [docs/verification.md](docs/verification.md) for the exact local verification sequence, [docs/releasing.md](docs/releasing.md) for release rules and asset expectations, and [docs/check-output-downstream-audit.md](docs/check-output-downstream-audit.md) for the current audit of known `check` output consumers.

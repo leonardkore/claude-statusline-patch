@@ -422,16 +422,20 @@ func rebuildPatchedBinary(originalBytes []byte, bundle *bun.Bundle, graph *bun.M
 	if err != nil {
 		return nil, patch.Inspection{}, err
 	}
-	patchedBytes, err := bun.ReplacePayload(originalBytes, bundle.Metadata, patchedPayload)
+	_, postInspection, err := inspectPayload(bundle.Metadata.Format, patchedPayload)
 	if err != nil {
-		return nil, patch.Inspection{}, fmt.Errorf("replace embedded payload: %w", err)
-	}
-	_, _, postInspection, err := inspectBinary(patchedBytes)
-	if err != nil {
-		return nil, patch.Inspection{}, fmt.Errorf("re-validate rebuilt binary: %w", err)
+		return nil, patch.Inspection{}, fmt.Errorf("re-validate rebuilt payload: %w", err)
 	}
 	if postInspection.State != patch.StatePatched || postInspection.IntervalMS != intervalMS {
-		return nil, patch.Inspection{}, fmt.Errorf("re-validate rebuilt binary: expected patched %dms, got %s %dms", intervalMS, postInspection.State, postInspection.IntervalMS)
+		return nil, patch.Inspection{}, fmt.Errorf("re-validate rebuilt payload: expected patched %dms, got %s %dms", intervalMS, postInspection.State, postInspection.IntervalMS)
+	}
+	replacementCapacity := len(originalBytes)
+	if bundle.Metadata.Format == bun.FormatOverlay {
+		replacementCapacity = len(originalBytes) - bundle.Metadata.PayloadSize + len(patchedPayload)
+	}
+	patchedBytes, err := bun.ReplacePayloadInto(make([]byte, 0, replacementCapacity), originalBytes, bundle.Metadata, patchedPayload)
+	if err != nil {
+		return nil, patch.Inspection{}, fmt.Errorf("replace embedded payload: %w", err)
 	}
 	return patchedBytes, postInspection, nil
 }
@@ -441,19 +445,27 @@ func inspectBinary(data []byte) (*bun.Bundle, *bun.ModuleGraph, patch.Inspection
 	if err != nil {
 		return nil, nil, patch.Inspection{}, fmt.Errorf("extract embedded Bun payload: %w", err)
 	}
-	graph, err := bun.ParseModuleGraph(bundle.Metadata.Format, bundle.Payload)
+	graph, inspection, err := inspectPayload(bundle.Metadata.Format, bundle.Payload)
 	if err != nil {
-		return nil, nil, patch.Inspection{}, fmt.Errorf("parse embedded Bun module graph: %w", err)
+		return nil, nil, patch.Inspection{}, err
+	}
+	return bundle, graph, inspection, nil
+}
+
+func inspectPayload(format bun.Format, payload []byte) (*bun.ModuleGraph, patch.Inspection, error) {
+	graph, err := bun.ParseModuleGraph(format, payload)
+	if err != nil {
+		return nil, patch.Inspection{}, fmt.Errorf("parse embedded Bun module graph: %w", err)
 	}
 	_, entryModule, err := graph.EntryPointModule()
 	if err != nil {
-		return nil, nil, patch.Inspection{}, err
+		return nil, patch.Inspection{}, err
 	}
 	entryContents, err := graph.Slice(entryModule.Contents)
 	if err != nil {
-		return nil, nil, patch.Inspection{}, err
+		return nil, patch.Inspection{}, err
 	}
-	return bundle, graph, patch.Inspect(entryContents), nil
+	return graph, patch.Inspect(entryContents), nil
 }
 
 func fail(err error) int {

@@ -60,6 +60,34 @@ func TestReplacePayloadSection(t *testing.T) {
 	}
 }
 
+func TestReplacePayloadIntoReusesDestination(t *testing.T) {
+	payload := []byte("console.log('bun section');")
+	image := buildMinimalELFWithBunSection(t, payload)
+	meta, err := ParseELFSectionMetadata(image)
+	if err != nil {
+		t.Fatalf("ParseELFSectionMetadata failed: %v", err)
+	}
+
+	dst := make([]byte, 0, len(image))
+	replaced, err := ReplacePayloadInto(dst, image, meta, []byte("console.log('bun replace');"))
+	if err != nil {
+		t.Fatalf("ReplacePayloadInto failed: %v", err)
+	}
+	if len(replaced) != len(image) {
+		t.Fatalf("expected replaced image length %d, got %d", len(image), len(replaced))
+	}
+	if cap(replaced) != cap(dst) {
+		t.Fatalf("expected caller destination to be reused")
+	}
+	extracted, err := Extract(replaced)
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	if !bytes.Equal(extracted.Payload, []byte("console.log('bun replace');")) {
+		t.Fatalf("unexpected replaced payload %q", extracted.Payload)
+	}
+}
+
 func TestReplacePayloadOverlayRoundTrip(t *testing.T) {
 	originalPayload := buildOverlayGraphPayload([]byte(`VERSION:"2.1.84";console.log("overlay");`))
 	image := buildOverlayFixture(originalPayload)

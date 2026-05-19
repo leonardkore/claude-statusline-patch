@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,7 +259,14 @@ func TestLoadVerifiedOutcomeReportsInvalidRecord(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(`{"schema_version":1,"canonical_path":"`+canonicalPath+`"}`), 0o600); err != nil {
+	data, err := json.Marshal(map[string]any{
+		"schema_version": 1,
+		"canonical_path": canonicalPath,
+	})
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
