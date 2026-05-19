@@ -127,6 +127,7 @@ func TestApplyProducesManifestPatchedFixtures(t *testing.T) {
 		{unpatchedID: "claude-2.1.119-unpatched", patchedID: "claude-2.1.119-patched-1000"},
 		{unpatchedID: "claude-2.1.128-unpatched", patchedID: "claude-2.1.128-patched-1000"},
 		{unpatchedID: "claude-2.1.143-unpatched", patchedID: "claude-2.1.143-patched-1000"},
+		{unpatchedID: "claude-2.1.144-unpatched", patchedID: "claude-2.1.144-patched-1000"},
 	}
 
 	for _, tc := range cases {
