@@ -128,6 +128,7 @@ func TestApplyProducesManifestPatchedFixtures(t *testing.T) {
 		{unpatchedID: "claude-2.1.128-unpatched", patchedID: "claude-2.1.128-patched-1000"},
 		{unpatchedID: "claude-2.1.143-unpatched", patchedID: "claude-2.1.143-patched-1000"},
 		{unpatchedID: "claude-2.1.144-unpatched", patchedID: "claude-2.1.144-patched-1000"},
+		{unpatchedID: "claude-2.1.145-unpatched", patchedID: "claude-2.1.145-patched-1000"},
 	}
 
 	for _, tc := range cases {
@@ -267,6 +268,26 @@ func TestKnownShapeV5StillPatchesForUnverifiedVersion(t *testing.T) {
 	}
 }
 
+func TestKnownShapeV6StillPatchesForUnverifiedVersion(t *testing.T) {
+	t.Parallel()
+
+	payload := append(versionBytes("9.9.9"), loadFixture(t, "claude-2.1.145-unpatched.js")...)
+
+	inspection := Inspect(payload)
+	if inspection.State != StateUnpatched {
+		t.Fatalf("expected unpatched, got %s", inspection.State)
+	}
+	if inspection.ShapeID != ShapeIDStatuslineDebounceV6 {
+		t.Fatalf("expected known shape id, got %s", inspection.ShapeID)
+	}
+	if IsDocumentedLiveVerifiedVersion(inspection.Version) {
+		t.Fatalf("did not expect synthetic version to be documented live-verified")
+	}
+	if _, err := ApplyInspection(payload, inspection, 1000); err != nil {
+		t.Fatalf("expected quick-apply known shape to patch, got %v", err)
+	}
+}
+
 func TestExtractMatchedSnippetReturnsKnownSnippet(t *testing.T) {
 	t.Parallel()
 
@@ -329,6 +350,23 @@ func TestExtractMatchedSnippetReturnsKnownSnippetV5(t *testing.T) {
 	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.143-unpatched.js"))
 	if inspection.ShapeID != ShapeIDStatuslineDebounceV5 {
 		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV5, inspection.ShapeID)
+	}
+	if !bytes.Equal(snippet, expected) {
+		t.Fatalf("expected extracted snippet to match fixture bytes")
+	}
+}
+
+func TestExtractMatchedSnippetReturnsKnownSnippetV6(t *testing.T) {
+	t.Parallel()
+
+	payload := fixturePayloadByID(t, "claude-2.1.145-unpatched")
+	snippet, inspection, err := ExtractMatchedSnippet(payload)
+	if err != nil {
+		t.Fatalf("extract matched snippet failed: %v", err)
+	}
+	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.145-unpatched.js"))
+	if inspection.ShapeID != ShapeIDStatuslineDebounceV6 {
+		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV6, inspection.ShapeID)
 	}
 	if !bytes.Equal(snippet, expected) {
 		t.Fatalf("expected extracted snippet to match fixture bytes")
