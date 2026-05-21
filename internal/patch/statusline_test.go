@@ -129,6 +129,7 @@ func TestApplyProducesManifestPatchedFixtures(t *testing.T) {
 		{unpatchedID: "claude-2.1.143-unpatched", patchedID: "claude-2.1.143-patched-1000"},
 		{unpatchedID: "claude-2.1.144-unpatched", patchedID: "claude-2.1.144-patched-1000"},
 		{unpatchedID: "claude-2.1.145-unpatched", patchedID: "claude-2.1.145-patched-1000"},
+		{unpatchedID: "claude-2.1.146-unpatched", patchedID: "claude-2.1.146-patched-1000"},
 	}
 
 	for _, tc := range cases {
@@ -359,12 +360,12 @@ func TestExtractMatchedSnippetReturnsKnownSnippetV5(t *testing.T) {
 func TestExtractMatchedSnippetReturnsKnownSnippetV6(t *testing.T) {
 	t.Parallel()
 
-	payload := fixturePayloadByID(t, "claude-2.1.145-unpatched")
+	payload := fixturePayloadByID(t, "claude-2.1.146-unpatched")
 	snippet, inspection, err := ExtractMatchedSnippet(payload)
 	if err != nil {
 		t.Fatalf("extract matched snippet failed: %v", err)
 	}
-	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.145-unpatched.js"))
+	expected := trimTrailingLineEndings(loadFixture(t, "claude-2.1.146-unpatched.js"))
 	if inspection.ShapeID != ShapeIDStatuslineDebounceV6 {
 		t.Fatalf("expected shape id %s, got %s", ShapeIDStatuslineDebounceV6, inspection.ShapeID)
 	}

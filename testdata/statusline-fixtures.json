@@ -465,6 +465,35 @@
       "notes": "Generated patched snippet for Claude 2.1.145 from the authoritative unpatched snippet."
     },
     {
+      "id": "claude-2.1.146-unpatched",
+      "path": "claude-2.1.146-unpatched.js",
+      "version": "2.1.146",
+      "patch_state": "unpatched",
+      "state": "unpatched",
+      "shape_id": "statusline_debounce_v6",
+      "interval_ms": 0,
+      "authoritative": true,
+      "support_claim": "live_verified",
+      "source_binary_sha256": "825d5301380f1f5f466c5268de25a062927be658938fc1d630cfa02c521b8185",
+      "extracted_at": "2026-05-20",
+      "notes": "Real unpatched snippet from Claude 2.1.146 Linux x86_64 binary."
+    },
+    {
+      "id": "claude-2.1.146-patched-1000",
+      "path": "claude-2.1.146-patched-1000.js",
+      "version": "2.1.146",
+      "patch_state": "patched",
+      "state": "patched",
+      "shape_id": "statusline_debounce_v6",
+      "interval_ms": 1000,
+      "authoritative": false,
+      "support_claim": "live_verified",
+      "source_binary_sha256": "825d5301380f1f5f466c5268de25a062927be658938fc1d630cfa02c521b8185",
+      "generated_by_tool_version": "dev",
+      "extracted_at": "2026-05-20",
+      "notes": "Generated patched snippet for Claude 2.1.146 from the authoritative unpatched snippet."
+    },
+    {
       "id": "negative-2.1.85-duplicate-unpatched",
       "path": "negative-2.1.85-duplicate-unpatched.js",
       "version": "2.1.85",

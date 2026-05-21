@@ -102,7 +102,7 @@ type scanResult struct {
 var (
 	identifierPattern      = `[A-Za-z_$][A-Za-z0-9_$]*`
 	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3(), newStatuslineDebounceV4(), newStatuslineDebounceV5(), newStatuslineDebounceV6()}
-	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}, "2.1.143": {}, "2.1.144": {}, "2.1.145": {}}
+	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}, "2.1.143": {}, "2.1.144": {}, "2.1.145": {}, "2.1.146": {}}
 )
 
 func Inspect(payload []byte) Inspection {
@@ -599,7 +599,7 @@ func newStatuslineDebounceV6() shapeFamily {
 	)
 	return shapeFamily{
 		id:                ShapeIDStatuslineDebounceV6,
-		observedVersions:  []string{"2.1.145"},
+		observedVersions:  []string{"2.1.145", "2.1.146"},
 		unpatched:         compilePattern(unpatchedPattern),
 		patched:           compilePattern(patchedPattern),
 		validateUnpatched: validateUnpatchedMatchV6,
