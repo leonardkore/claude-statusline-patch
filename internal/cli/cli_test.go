@@ -668,6 +668,52 @@ func TestRunEnsureTransientVerificationFailureRetriesBeforeRestore(t *testing.T)
 	}
 }
 
+func TestRunEnsureAcceptsStartupSkippedLiveCounting(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	attempts := 0
+	originalVerifier := verifyCurrentBinary
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+	verifyCurrentBinary = func(ctx context.Context, targetBinary string, contractVersion, durationSeconds int) (verifier.Result, error) {
+		attempts++
+		return startupSkippedLiveCountingResult(durationSeconds, contractVersion), nil
+	}
+
+	binaryPath := writeTestBinary(t, tempDir, "ensure-startup-skipped", fixturePayloadByID(t, "claude-2.1.85-unpatched"))
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected ensure success for live counting verifier output, got exit %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if attempts != ensureVerificationAttempts {
+		t.Fatalf("expected verifier retries before accepting live counting, got %d", attempts)
+	}
+	for _, fragment := range []string{
+		"ensure_outcome: verified_success",
+		"ensure_action: applied_and_verified",
+		"verification_passed: true",
+		"verification_distinct_session_seconds: 0, 2, 3, 4, 5, 6",
+		"restored_this_run: false",
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("expected stdout to contain %q, got %q", fragment, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	_, _, inspection, err := inspectBinary(mustReadFile(t, binaryPath))
+	if err != nil {
+		t.Fatalf("inspectBinary failed: %v", err)
+	}
+	if inspection.State != patch.StatePatched || inspection.IntervalMS != 1000 {
+		t.Fatalf("expected binary to remain patched after accepted live counting, got %+v", inspection)
+	}
+}
+
 func TestRunEnsureManagedPatchedUnverifiedRerunVerifiesExistingPatch(t *testing.T) {
 	tempDir := t.TempDir()
 	setTestStateRoot(t)
@@ -1084,6 +1130,75 @@ func TestRunEnsureManagedPatchedTransientVerificationFailureRetriesBeforeRestore
 	}
 }
 
+func TestRunEnsureManagedPatchedAcceptsStartupSkippedLiveCounting(t *testing.T) {
+	tempDir := t.TempDir()
+	setTestStateRoot(t)
+
+	attempts := 0
+	originalVerifier := verifyCurrentBinary
+	verifyCurrentBinary = func(ctx context.Context, targetBinary string, contractVersion, durationSeconds int) (verifier.Result, error) {
+		attempts++
+		return startupSkippedLiveCountingResult(durationSeconds, contractVersion), nil
+	}
+	t.Cleanup(func() {
+		verifyCurrentBinary = originalVerifier
+	})
+
+	originalPayload := fixturePayloadByID(t, "claude-2.1.85-unpatched")
+	originalBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(originalPayload))
+	patchedPayload, err := patch.Apply(originalPayload, 1000)
+	if err != nil {
+		t.Fatalf("patch.Apply failed: %v", err)
+	}
+	patchedBinary := buildMinimalELFWithBunSection(t, buildSectionGraphPayload(patchedPayload))
+
+	binaryPath := filepath.Join(tempDir, "ensure-rerun-startup-skipped")
+	if err := os.WriteFile(binaryPath, patchedBinary, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	originalHash := backup.SHA256Bytes(originalBinary)
+	patchedHash := backup.SHA256Bytes(patchedBinary)
+	backupPath, _, err := backup.EnsureBackup(binaryPath, originalHash, originalBinary)
+	if err != nil {
+		t.Fatalf("EnsureBackup failed: %v", err)
+	}
+	if err := backup.SaveMetadata(backup.Metadata{
+		CanonicalPath:   binaryPath,
+		DisplayPath:     binaryPath,
+		DetectedVersion: "2.1.85",
+		OriginalSHA256:  originalHash,
+		PatchedSHA256:   patchedHash,
+		IntervalMS:      1000,
+		BackupPath:      backupPath,
+		FileMode:        0o755,
+	}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+
+	exitCode, stdout, stderr := captureRunEnsure(t, "--binary", binaryPath)
+	if exitCode != 0 {
+		t.Fatalf("expected verify-existing-patch success for live counting, got %d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	}
+	if attempts != ensureVerificationAttempts {
+		t.Fatalf("expected verifier retries before accepting live counting, got %d", attempts)
+	}
+	if !strings.Contains(stdout, "ensure_action: verified_existing_patch") {
+		t.Fatalf("expected verified existing patch action, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "verification_passed: true") {
+		t.Fatalf("expected accepted verifier output to be reported as passed, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "restored_this_run: false") {
+		t.Fatalf("expected accepted live counting not to restore, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if got := mustReadFile(t, binaryPath); !bytes.Equal(got, patchedBinary) {
+		t.Fatalf("expected patched binary to remain in place")
+	}
+}
+
 func TestRunApplyAndRestoreRespectTargetLock(t *testing.T) {
 	tempDir := t.TempDir()
 	setTestStateRoot(t)
@@ -1328,6 +1443,21 @@ func successfulVerifierResult(durationSeconds, contractVersion int) verifier.Res
 		EventCount:              5,
 		DistinctSessionSeconds:  []int{0, 1, 2, 3, 4},
 		Passed:                  true,
+	}
+}
+
+func startupSkippedLiveCountingResult(durationSeconds, contractVersion int) verifier.Result {
+	return verifier.Result{
+		Mode:                    "on",
+		TargetBinary:            "/test/claude",
+		RunID:                   "test-run",
+		DurationSeconds:         durationSeconds,
+		VerifierContractVersion: contractVersion,
+		EventsFile:              "events.jsonl",
+		PaneCaptureFile:         "pane.txt",
+		EventCount:              6,
+		DistinctSessionSeconds:  []int{0, 2, 3, 4, 5, 6},
+		Passed:                  false,
 	}
 }
 
