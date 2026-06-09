@@ -20,6 +20,7 @@ const (
 	ShapeIDStatuslineDebounceV4 = "statusline_debounce_v4"
 	ShapeIDStatuslineDebounceV5 = "statusline_debounce_v5"
 	ShapeIDStatuslineDebounceV6 = "statusline_debounce_v6"
+	ShapeIDStatuslineDebounceV7 = "statusline_debounce_v7"
 )
 
 type State string
@@ -101,8 +102,8 @@ type scanResult struct {
 
 var (
 	identifierPattern      = `[A-Za-z_$][A-Za-z0-9_$]*`
-	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3(), newStatuslineDebounceV4(), newStatuslineDebounceV5(), newStatuslineDebounceV6()}
-	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}, "2.1.143": {}, "2.1.144": {}, "2.1.145": {}, "2.1.146": {}}
+	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3(), newStatuslineDebounceV4(), newStatuslineDebounceV5(), newStatuslineDebounceV6(), newStatuslineDebounceV7()}
+	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}, "2.1.143": {}, "2.1.144": {}, "2.1.145": {}, "2.1.146": {}, "2.1.170": {}}
 )
 
 func Inspect(payload []byte) Inspection {
@@ -418,6 +419,14 @@ func validatePatchedMatchV6(payload []byte, match regexMatch) bool {
 		equalAllBytes(payload, match, "prStatus", "prStatusAssign", "prStatusDep")
 }
 
+func validateUnpatchedMatchV7(payload []byte, match regexMatch) bool {
+	return validateUnpatchedMatchV6(payload, match)
+}
+
+func validatePatchedMatchV7(payload []byte, match regexMatch) bool {
+	return validatePatchedMatchV6(payload, match)
+}
+
 func equalAllBytes(payload []byte, match regexMatch, names ...string) bool {
 	if len(names) == 0 {
 		return true
@@ -608,6 +617,27 @@ func newStatuslineDebounceV6() shapeFamily {
 	}
 }
 
+func newStatuslineDebounceV7() shapeFamily {
+	id := identifierPattern
+	unpatchedPattern := fmt.Sprintf(
+		`,(?P<timer>%[1]s)=(?P<debounceHook>%[1]s)\(\(\)=>\{(?P<refresh>%[1]s)\(\)\},300\);(?P<hooks>%[1]s)\.useEffect\(\(\)=>\{if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|(?P<token>%[1]s)!==(?P<stateToken>%[1]s)\.current\.tokenUsage\|\|(?P<permission>%[1]s)!==(?P<statePerm>%[1]s)\.current\.permissionMode\|\|(?P<vim>%[1]s)!==(?P<stateVim>%[1]s)\.current\.vimMode\|\|(?P<model>%[1]s)!==(?P<stateModel>%[1]s)\.current\.mainLoopModel\|\|(?P<fast>%[1]s)!==(?P<stateFast>%[1]s)\.current\.fastMode\|\|(?P<effort>%[1]s)!==(?P<stateEffort>%[1]s)\.current\.effortValue\|\|(?P<thinking>%[1]s)!==(?P<stateThinking>%[1]s)\.current\.thinkingEnabled\|\|(?P<prStatus>%[1]s)!==(?P<statePRStatus>%[1]s)\.current\.prStatus\)(?P<stateTokenAssign>%[1]s)\.current\.tokenUsage=(?P<tokenAssign>%[1]s),(?P<statePermAssign>%[1]s)\.current\.permissionMode=(?P<permissionAssign>%[1]s),(?P<stateVimAssign>%[1]s)\.current\.vimMode=(?P<vimAssign>%[1]s),(?P<stateModelAssign>%[1]s)\.current\.mainLoopModel=(?P<modelAssign>%[1]s),(?P<stateFastAssign>%[1]s)\.current\.fastMode=(?P<fastAssign>%[1]s),(?P<stateEffortAssign>%[1]s)\.current\.effortValue=(?P<effortAssign>%[1]s),(?P<stateThinkingAssign>%[1]s)\.current\.thinkingEnabled=(?P<thinkingAssign>%[1]s),(?P<statePRStatusAssign>%[1]s)\.current\.prStatus=(?P<prStatusAssign>%[1]s),(?P<timerInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<tokenDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<modelDep>%[1]s),(?P<fastDep>%[1]s),(?P<effortDep>%[1]s),(?P<thinkingDep>%[1]s),(?P<prStatusDep>%[1]s),(?P<timerDep>%[1]s)\]\);let (?P<intervalVar>%[1]s)=(?P<intervalConfig>%[1]s)\?\.refreshInterval;(?P<nativeIntervalHook>%[1]s)\((?P<timerIntervalArg>%[1]s),(?P<intervalVarRepeat>%[1]s)!==void 0\?Math\.max\(1,(?P<intervalVarMax>%[1]s)\)\*1000:null\);`,
+		id,
+	)
+	patchedPattern := fmt.Sprintf(
+		`,(?P<timer>%[1]s)=(?P<debounceHook>%[1]s)\(\(\)=>\{(?P<refresh>%[1]s)\(\)\},300\);(?P<hooks>%[1]s)\.useEffect\(\(\)=>\{if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|(?P<token>%[1]s)!==(?P<stateToken>%[1]s)\.current\.tokenUsage\|\|(?P<permission>%[1]s)!==(?P<statePerm>%[1]s)\.current\.permissionMode\|\|(?P<vim>%[1]s)!==(?P<stateVim>%[1]s)\.current\.vimMode\|\|(?P<model>%[1]s)!==(?P<stateModel>%[1]s)\.current\.mainLoopModel\|\|(?P<fast>%[1]s)!==(?P<stateFast>%[1]s)\.current\.fastMode\|\|(?P<effort>%[1]s)!==(?P<stateEffort>%[1]s)\.current\.effortValue\|\|(?P<thinking>%[1]s)!==(?P<stateThinking>%[1]s)\.current\.thinkingEnabled\|\|(?P<prStatus>%[1]s)!==(?P<statePRStatus>%[1]s)\.current\.prStatus\)(?P<stateTokenAssign>%[1]s)\.current\.tokenUsage=(?P<tokenAssign>%[1]s),(?P<statePermAssign>%[1]s)\.current\.permissionMode=(?P<permissionAssign>%[1]s),(?P<stateVimAssign>%[1]s)\.current\.vimMode=(?P<vimAssign>%[1]s),(?P<stateModelAssign>%[1]s)\.current\.mainLoopModel=(?P<modelAssign>%[1]s),(?P<stateFastAssign>%[1]s)\.current\.fastMode=(?P<fastAssign>%[1]s),(?P<stateEffortAssign>%[1]s)\.current\.effortValue=(?P<effortAssign>%[1]s),(?P<stateThinkingAssign>%[1]s)\.current\.thinkingEnabled=(?P<thinkingAssign>%[1]s),(?P<statePRStatusAssign>%[1]s)\.current\.prStatus=(?P<prStatusAssign>%[1]s),(?P<timerInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<tokenDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<modelDep>%[1]s),(?P<fastDep>%[1]s),(?P<effortDep>%[1]s),(?P<thinkingDep>%[1]s),(?P<prStatusDep>%[1]s),(?P<timerDep>%[1]s)\]\);let (?P<intervalVar>%[1]s)=(?P<intervalConfig>%[1]s)\?\.refreshInterval;(?P<nativeIntervalHook>%[1]s)\((?P<timerIntervalArg>%[1]s),(?P<interval>[1-9][0-9]*)\);`,
+		id,
+	)
+	return shapeFamily{
+		id:                ShapeIDStatuslineDebounceV7,
+		observedVersions:  []string{"2.1.170"},
+		unpatched:         compilePattern(unpatchedPattern),
+		patched:           compilePattern(patchedPattern),
+		validateUnpatched: validateUnpatchedMatchV7,
+		validatePatched:   validatePatchedMatchV7,
+		buildReplacement:  buildPatchedBytesV7,
+	}
+}
+
 func observedVersionsForShape(shapeID string) []string {
 	for _, family := range shapeFamilies {
 		if family.id == shapeID {
@@ -713,7 +743,38 @@ func buildPatchedBytesV6(payload []byte, match shapeMatch, intervalMS int) ([]by
 	return buildPatchedNativeIntervalReplacement(payload, match, intervalMS, true), nil
 }
 
+func buildPatchedBytesV7(payload []byte, match shapeMatch, intervalMS int) ([]byte, error) {
+	return buildPatchedNativeIntervalReplacementV7(payload, match, intervalMS), nil
+}
+
 func buildPatchedNativeIntervalReplacement(payload []byte, match shapeMatch, intervalMS int, includePRStatus bool) []byte {
+	replacement := buildPatchedNativeIntervalPrefix(payload, match, includePRStatus)
+	replacement.WriteString(match.match.string(payload, "nativeIntervalHook"))
+	replacement.WriteByte('(')
+	replacement.WriteString(match.match.string(payload, "timer"))
+	replacement.WriteByte(',')
+	replacement.WriteString(strconv.Itoa(intervalMS))
+	replacement.WriteString(");")
+	return replacement.Bytes()
+}
+
+func buildPatchedNativeIntervalReplacementV7(payload []byte, match shapeMatch, intervalMS int) []byte {
+	replacement := buildPatchedNativeIntervalPrefix(payload, match, true)
+	replacement.WriteString("let ")
+	replacement.WriteString(match.match.string(payload, "intervalVar"))
+	replacement.WriteByte('=')
+	replacement.WriteString(match.match.string(payload, "intervalConfig"))
+	replacement.WriteString("?.refreshInterval;")
+	replacement.WriteString(match.match.string(payload, "nativeIntervalHook"))
+	replacement.WriteByte('(')
+	replacement.WriteString(match.match.string(payload, "timer"))
+	replacement.WriteByte(',')
+	replacement.WriteString(strconv.Itoa(intervalMS))
+	replacement.WriteString(");")
+	return replacement.Bytes()
+}
+
+func buildPatchedNativeIntervalPrefix(payload []byte, match shapeMatch, includePRStatus bool) *bytes.Buffer {
 	fields := []trackedField{
 		{value: match.match.string(payload, "message"), property: "messageId", assign: false},
 		{value: match.match.string(payload, "token"), property: "tokenUsage", assign: true},
@@ -750,13 +811,7 @@ func buildPatchedNativeIntervalReplacement(payload []byte, match shapeMatch, int
 	deps = append(deps, match.match.string(payload, "timer"))
 	writeDependencies(replacement, deps)
 	replacement.WriteString("]);")
-	replacement.WriteString(match.match.string(payload, "nativeIntervalHook"))
-	replacement.WriteByte('(')
-	replacement.WriteString(match.match.string(payload, "timer"))
-	replacement.WriteByte(',')
-	replacement.WriteString(strconv.Itoa(intervalMS))
-	replacement.WriteString(");")
-	return replacement.Bytes()
+	return replacement
 }
 
 func buildPatchedReplacement(hooks, refresh, callback, state string, fields []trackedField, intervalMS int, callImmediately bool) []byte {
