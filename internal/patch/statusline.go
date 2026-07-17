@@ -21,6 +21,7 @@ const (
 	ShapeIDStatuslineDebounceV5 = "statusline_debounce_v5"
 	ShapeIDStatuslineDebounceV6 = "statusline_debounce_v6"
 	ShapeIDStatuslineDebounceV7 = "statusline_debounce_v7"
+	ShapeIDStatuslineDebounceV8 = "statusline_debounce_v8"
 )
 
 type State string
@@ -102,8 +103,8 @@ type scanResult struct {
 
 var (
 	identifierPattern      = `[A-Za-z_$][A-Za-z0-9_$]*`
-	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3(), newStatuslineDebounceV4(), newStatuslineDebounceV5(), newStatuslineDebounceV6(), newStatuslineDebounceV7()}
-	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}, "2.1.143": {}, "2.1.144": {}, "2.1.145": {}, "2.1.146": {}, "2.1.170": {}}
+	shapeFamilies          = []shapeFamily{newStatuslineDebounceV1(), newStatuslineDebounceV2(), newStatuslineDebounceV3(), newStatuslineDebounceV4(), newStatuslineDebounceV5(), newStatuslineDebounceV6(), newStatuslineDebounceV7(), newStatuslineDebounceV8()}
+	documentedLiveVerified = map[string]struct{}{"2.1.84": {}, "2.1.85": {}, "2.1.86": {}, "2.1.87": {}, "2.1.89": {}, "2.1.90": {}, "2.1.91": {}, "2.1.92": {}, "2.1.94": {}, "2.1.97": {}, "2.1.100": {}, "2.1.128": {}, "2.1.143": {}, "2.1.144": {}, "2.1.145": {}, "2.1.146": {}, "2.1.170": {}, "2.1.212": {}}
 )
 
 func Inspect(payload []byte) Inspection {
@@ -427,6 +428,22 @@ func validatePatchedMatchV7(payload []byte, match regexMatch) bool {
 	return validatePatchedMatchV6(payload, match)
 }
 
+func validateStatuslineMatchV8(payload []byte, match regexMatch) bool {
+	return equalAllBytes(payload, match, "timer", "timerInvoke", "timerDep", "timerIntervalArg") &&
+		equalAllBytes(payload, match, "object", "objectLookup") &&
+		equalAllBytes(payload, match, "state", "stateLookup", "stateAssign") &&
+		equalAllBytes(payload, match, "lookupKey", "lookupKeyRepeat") &&
+		equalAllBytes(payload, match, "message", "messageDep") &&
+		equalAllBytes(payload, match, "token", "tokenDep") &&
+		equalAllBytes(payload, match, "permission", "permissionDep") &&
+		equalAllBytes(payload, match, "vim", "vimDep") &&
+		equalAllBytes(payload, match, "model", "modelDep") &&
+		equalAllBytes(payload, match, "fast", "fastDep") &&
+		equalAllBytes(payload, match, "effort", "effortDep") &&
+		equalAllBytes(payload, match, "thinking", "thinkingDep") &&
+		equalAllBytes(payload, match, "prStatus", "prStatusDep")
+}
+
 func equalAllBytes(payload []byte, match regexMatch, names ...string) bool {
 	if len(names) == 0 {
 		return true
@@ -638,6 +655,34 @@ func newStatuslineDebounceV7() shapeFamily {
 	}
 }
 
+func newStatuslineDebounceV8() shapeFamily {
+	id := identifierPattern
+	prefix := fmt.Sprintf(
+		`,(?P<timer>%[1]s)=(?P<debounceHook>%[1]s)\(\(\)=>\{(?P<refresh>%[1]s)\(\)\},300\);(?P<hooks>%[1]s)\.useEffect\(\(\)=>\{let (?P<object>%[1]s)=\{tokenUsage:(?P<token>%[1]s),permissionMode:(?P<permission>%[1]s),vimMode:(?P<vim>%[1]s),mainLoopModel:(?P<model>%[1]s),fastMode:(?P<fast>%[1]s),effortValue:(?P<effort>%[1]s),thinkingEnabled:(?P<thinking>%[1]s),prStatus:(?P<prStatus>%[1]s)\};if\((?P<message>%[1]s)!==(?P<state>%[1]s)\.current\.messageId\|\|Object\.keys\((?P<objectLookup>%[1]s)\)\.some\(\((?P<lookupKey>%[1]s)\)=>(?P<objectRepeat>%[1]s)\[(?P<lookupKeyRepeat>%[1]s)\]!==(?P<stateLookup>%[1]s)\.current\[(?P<lookupKeyState>%[1]s)\]\)\)Object\.assign\((?P<stateAssign>%[1]s)\.current,(?P<objectAssign>%[1]s)\),(?P<timerInvoke>%[1]s)\(\)\},\[(?P<messageDep>%[1]s),(?P<tokenDep>%[1]s),(?P<permissionDep>%[1]s),(?P<vimDep>%[1]s),(?P<modelDep>%[1]s),(?P<fastDep>%[1]s),(?P<effortDep>%[1]s),(?P<thinkingDep>%[1]s),(?P<prStatusDep>%[1]s),(?P<timerDep>%[1]s)\]\);let (?P<intervalVar>%[1]s)=(?P<intervalConfig>%[1]s)\?\.refreshInterval;(?P<nativeIntervalHook>%[1]s)\((?P<timerIntervalArg>%[1]s),`,
+		id,
+	)
+	unpatchedPattern := prefix + fmt.Sprintf(`(?P<intervalVarRepeat>%[1]s)!==void 0\?Math\.max\(1,(?P<intervalVarMax>%[1]s)\)\*1000:null\);`, id)
+	patchedPattern := prefix + `(?P<interval>[1-9][0-9]*)\);`
+	return shapeFamily{
+		id:               ShapeIDStatuslineDebounceV8,
+		observedVersions: []string{"2.1.212"},
+		unpatched:        compilePattern(unpatchedPattern),
+		patched:          compilePattern(patchedPattern),
+		validateUnpatched: func(payload []byte, match regexMatch) bool {
+			return validateStatuslineMatchV8(payload, match) &&
+				equalAllBytes(payload, match, "object", "objectRepeat", "objectAssign") &&
+				equalAllBytes(payload, match, "lookupKey", "lookupKeyState") &&
+				equalAllBytes(payload, match, "intervalVar", "intervalVarRepeat", "intervalVarMax")
+		},
+		validatePatched: func(payload []byte, match regexMatch) bool {
+			return validateStatuslineMatchV8(payload, match) &&
+				equalAllBytes(payload, match, "object", "objectRepeat", "objectAssign") &&
+				equalAllBytes(payload, match, "lookupKey", "lookupKeyState")
+		},
+		buildReplacement: buildPatchedBytesV8,
+	}
+}
+
 func observedVersionsForShape(shapeID string) []string {
 	for _, family := range shapeFamilies {
 		if family.id == shapeID {
@@ -745,6 +790,15 @@ func buildPatchedBytesV6(payload []byte, match shapeMatch, intervalMS int) ([]by
 
 func buildPatchedBytesV7(payload []byte, match shapeMatch, intervalMS int) ([]byte, error) {
 	return buildPatchedNativeIntervalReplacementV7(payload, match, intervalMS), nil
+}
+
+func buildPatchedBytesV8(payload []byte, match shapeMatch, intervalMS int) ([]byte, error) {
+	intervalStart := match.match.idxs[match.match.pattern.groupIndex["timerIntervalArg"]*2+1]
+	replacement := append([]byte(nil), payload[match.start:intervalStart]...)
+	replacement = append(replacement, ',')
+	replacement = strconv.AppendInt(replacement, int64(intervalMS), 10)
+	replacement = append(replacement, ')', ';')
+	return replacement, nil
 }
 
 func buildPatchedNativeIntervalReplacement(payload []byte, match shapeMatch, intervalMS int, includePRStatus bool) []byte {

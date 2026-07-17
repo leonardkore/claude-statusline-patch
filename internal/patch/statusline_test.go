@@ -131,6 +131,7 @@ func TestApplyProducesManifestPatchedFixtures(t *testing.T) {
 		{unpatchedID: "claude-2.1.145-unpatched", patchedID: "claude-2.1.145-patched-1000"},
 		{unpatchedID: "claude-2.1.146-unpatched", patchedID: "claude-2.1.146-patched-1000"},
 		{unpatchedID: "claude-2.1.170-unpatched", patchedID: "claude-2.1.170-patched-1000"},
+		{unpatchedID: "claude-2.1.212-unpatched", patchedID: "claude-2.1.212-patched-1000"},
 	}
 
 	for _, tc := range cases {
@@ -300,6 +301,26 @@ func TestKnownShapeV7StillPatchesForUnverifiedVersion(t *testing.T) {
 		t.Fatalf("expected unpatched, got %s", inspection.State)
 	}
 	if inspection.ShapeID != ShapeIDStatuslineDebounceV7 {
+		t.Fatalf("expected known shape id, got %s", inspection.ShapeID)
+	}
+	if IsDocumentedLiveVerifiedVersion(inspection.Version) {
+		t.Fatalf("did not expect synthetic version to be documented live-verified")
+	}
+	if _, err := ApplyInspection(payload, inspection, 1000); err != nil {
+		t.Fatalf("expected quick-apply known shape to patch, got %v", err)
+	}
+}
+
+func TestKnownShapeV8StillPatchesForUnverifiedVersion(t *testing.T) {
+	t.Parallel()
+
+	payload := append(versionBytes("9.9.9"), loadFixture(t, "claude-2.1.212-unpatched.js")...)
+
+	inspection := Inspect(payload)
+	if inspection.State != StateUnpatched {
+		t.Fatalf("expected unpatched, got %s", inspection.State)
+	}
+	if inspection.ShapeID != ShapeIDStatuslineDebounceV8 {
 		t.Fatalf("expected known shape id, got %s", inspection.ShapeID)
 	}
 	if IsDocumentedLiveVerifiedVersion(inspection.Version) {

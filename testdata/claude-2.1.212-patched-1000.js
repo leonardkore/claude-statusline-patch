@@ -1,0 +1,1 @@
+,j=QX(()=>{L()},300);zx.useEffect(()=>{let V={tokenUsage:r,permissionMode:i,vimMode:n,mainLoopModel:d,fastMode:p,effortValue:f,thinkingEnabled:m,prStatus:g};if(t!==D.current.messageId||Object.keys(V).some((X)=>V[X]!==D.current[X]))Object.assign(D.current,V),j()},[t,r,i,n,d,p,f,m,g,j]);let U=u?.refreshInterval;lc(j,1000);
