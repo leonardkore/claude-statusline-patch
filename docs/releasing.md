@@ -2,7 +2,7 @@
 
 Phase 1 release policy is strict:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`, `2.1.170`, `2.1.212`
 - other OS binaries may be built and attached, but they must not be described as live-verified unless they were actually tested
 - no `tweakcc` integration, no hook logic, no auto-update logic
 - support for a new Claude version is a patch release unless the CLI contract changes
@@ -24,7 +24,7 @@ Before opening a PR:
 
 The PR must record:
 
-- Claude version tested: exact tested version(s), for example `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`
+- Claude version tested: exact tested version(s), including `2.1.212` for this release
 - OS tested: Linux
 - architecture tested: `x86_64`
 - external patchers inactive during verification: yes
@@ -72,7 +72,7 @@ Release title:
 
 Release notes must include:
 
-- supported Claude versions verified: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`
+- supported Claude versions verified: the current list in `README.md`, including `2.1.212`
 - supported OS live-verified: Linux
 - binaries attached for each target in the build matrix
 - `SHA256SUMS.txt`
@@ -82,4 +82,4 @@ Release notes must include:
 go install github.com/leonardkore/claude-statusline-patch@<next-release-tag-vX.Y.Z>
 ```
 
-- warning that only Linux + Claude `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146` are live-verified unless more testing was actually done
+- warning that only the Linux + Claude versions listed as live-verified in `README.md` are live-verified unless more testing was actually done

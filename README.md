@@ -4,7 +4,7 @@
 
 Phase 1 scope is intentionally small:
 
-- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`
+- live-verified target: Linux `x86_64` + Claude Code `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`, `2.1.170`, `2.1.212`
 - public commands: `ensure`, `apply`, `check`, `restore`, `version`
 - default interval: `1000ms`
 - transactional binary replacement with tool-owned backup state
@@ -152,7 +152,7 @@ Backups are keyed by the canonical target path plus the original SHA-256 so mult
 
 Phase 1 support claims are intentionally strict:
 
-- verified Claude versions: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`, `2.1.170`
+- verified Claude versions: `2.1.84`, `2.1.85`, `2.1.86`, `2.1.87`, `2.1.89`, `2.1.90`, `2.1.91`, `2.1.92`, `2.1.94`, `2.1.97`, `2.1.100`, `2.1.128`, `2.1.143`, `2.1.144`, `2.1.145`, `2.1.146`, `2.1.170`, `2.1.212`
 - verified OS: Linux
 - verified architecture: `x86_64`
 
@@ -178,6 +178,7 @@ Phase 1 support claims are intentionally strict:
 | Linux `x86_64` | `2.1.145` | `statusline_debounce_v6` | yes | yes | `v0.2.11` | live-verified native refreshInterval shape with PR status tracking; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | `2.1.146` | `statusline_debounce_v6` | yes | yes | `v0.2.12` | live-verified native refreshInterval shape with PR status tracking; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | `2.1.170` | `statusline_debounce_v7` | yes | yes | `v0.2.13` | live-verified native refreshInterval shape with direct statusLine config binding; authoritative unpatched fixture and generated patched fixture tracked |
+| Linux `x86_64` | `2.1.212` | `statusline_debounce_v8` | yes | yes | `v0.2.14` | live-verified compact tracked-state shape; authoritative unpatched fixture and generated patched fixture tracked |
 | Linux `x86_64` | future version with known family | `statusline_debounce_v1` or later | maybe | no, until live-verified | UNKNOWN | use `check` then `apply --dry-run` before changing code |
 
 See [docs/verification.md](docs/verification.md) for the exact local verification sequence, [docs/releasing.md](docs/releasing.md) for release rules and asset expectations, and [docs/check-output-downstream-audit.md](docs/check-output-downstream-audit.md) for the current audit of known `check` output consumers.
